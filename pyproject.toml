@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lookalike-watch"
+version = "0.1.0"
+description = "Find and monitor lookalike domains that could be used to phish your users."
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [{ name = "Mateusz" }]
+requires-python = ">=3.10"
+dependencies = [
+    "dnspython>=2.4",
+    "requests>=2.31",
+    "tldextract>=5.1",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.5"]
+
+[project.scripts]
+lookalike-watch = "lookalike_watch.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
