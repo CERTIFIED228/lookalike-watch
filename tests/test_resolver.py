@@ -92,3 +92,9 @@ def test_resolve_all_reports_progress():
     resolve_all(["a.com", "b.com", "c.com"], lambda n: None, workers=2,
                 progress=lambda done, total: seen.append((done, total)))
     assert seen[-1] == (3, 3)
+
+
+def test_junk_mx_hosts_are_not_mail():
+    # Seen in the wild: "10 localhost." and "10 ~" on parked lookalikes.
+    fake = FakeResolver({"junk.com": {"NS": ["ns1.x."], "MX": ["10 localhost.", "10 ~"]}})
+    assert DnsLookup(resolver=fake)("junk.com").mx == []

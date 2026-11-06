@@ -121,8 +121,27 @@ def test_nameserver_and_timeout_are_passed_through(capsys, fake_net):
 
 
 def test_lying_resolver_is_detected():
-    assert cli.resolver_is_lying(lambda name: DnsRecord(a=["198.51.100.1"]))
-    assert not cli.resolver_is_lying(lambda name: None)
+    assert cli.resolver_is_lying(lambda name: DnsRecord(a=["198.51.100.1"]), "paypal")
+    assert not cli.resolver_is_lying(lambda name: None, "paypal")
+
+
+def test_resolver_that_only_lies_about_brand_names_is_detected():
+    # What a Virgin Media connection did on a real run: random names were
+    # NXDOMAIN, but made-up names containing "paypal" got a filter page IP.
+    def lookup(name):
+        return DnsRecord(a=["81.99.162.48"]) if "paypal" in name else None
+
+    assert cli.resolver_is_lying(lookup, "paypal")
+
+
+def test_unverified_answers_are_warned_about(monkeypatch, capsys, fake_net):
+    filtered = {**FAKE_DNS, "paypa.com": DnsRecord(a=["81.99.162.48"])}
+    monkeypatch.setattr(cli, "make_lookup",
+                        lambda timeout, nameservers=None: filtered.get)
+    cli.main(["scan", "paypal.com", "-t", "omission"])
+    err = capsys.readouterr().err
+    assert "1 answer(s) had no nameservers" in err
+    assert "--nameserver" in err
 
 
 def test_lying_resolver_stops_the_scan(monkeypatch, capsys, fake_net):

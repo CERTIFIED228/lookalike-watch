@@ -87,3 +87,12 @@ def test_ct_only_still_fails_loudly_when_ct_is_down():
     with pytest.raises(CTError):
         run_scan(BRAND, lookup=FAKE_DNS.get, ct_only=True, session=DownCTSession(),
                  ct_retries=1)
+
+
+def test_answers_without_nameservers_are_not_reported_as_registered():
+    # A real registered domain always has NS records. Seen live: an ISP filter
+    # answering A queries for brand-like names that have no NS at all.
+    dns_with_filter = {**FAKE_DNS, "paypa.com": DnsRecord(a=["81.99.162.48"])}
+    result = run_scan(BRAND, lookup=dns_with_filter.get, techniques=["omission"])
+    assert "paypa.com" not in {f.ascii for f in result.findings}
+    assert result.unverified == ["paypa.com"]

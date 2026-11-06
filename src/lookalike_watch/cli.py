@@ -43,16 +43,22 @@ def _progress(done: int, total: int) -> None:
         print(f"\rchecked {done}/{total}", end=end, file=sys.stderr, flush=True)
 
 
-def resolver_is_lying(lookup) -> bool:
-    """Some ISP resolvers answer for domains that don't exist (to show ads).
+def resolver_is_lying(lookup, brand_name: str) -> bool:
+    """Some resolvers answer for domains that don't exist.
 
-    That would make every candidate look registered, so test with a name
-    that can't possibly exist first.
+    ISPs do it to show ad pages, and some filters only do it for names that
+    look like a well-known brand. Either way every candidate would look
+    registered, so test with made-up names first, including one that
+    contains the brand.
     """
-    try:
-        return lookup(f"lw-{secrets.token_hex(12)}.com") is not None
-    except Exception:
-        return False
+    token = secrets.token_hex(8)
+    for name in (f"lw-{token}.com", f"{brand_name}-{token}.com"):
+        try:
+            if lookup(name) is not None:
+                return True
+        except Exception:
+            continue
+    return False
 
 
 def _add_common(p: argparse.ArgumentParser) -> None:
@@ -134,7 +140,7 @@ def cmd_generate(args) -> int:
 
 def _scan(args, brand):
     lookup = make_lookup(args.timeout, args.nameservers)
-    if resolver_is_lying(lookup):
+    if resolver_is_lying(lookup, brand.name):
         raise ResolverError(
             "your DNS resolver answers for domains that don't exist, so every candidate "
             "would look registered. Try a different one, e.g. --nameserver 1.1.1.1"
@@ -150,6 +156,10 @@ def _scan(args, brand):
     if result.errors:
         msg += f", {len(result.errors)} lookups timed out"
     log(msg)
+    if result.unverified:
+        log(f"warning: {len(result.unverified)} answer(s) had no nameservers, so they came "
+            "from your DNS resolver (ISP filtering?) rather than a real domain. They were "
+            "left out. For a clean scan, add --nameserver 1.1.1.1")
     if result.ct_error:
         log(f"warning: CT search skipped - {result.ct_error}")
     return result

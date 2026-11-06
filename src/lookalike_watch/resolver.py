@@ -75,7 +75,9 @@ def _mail_hosts(mx_answers: list[str]) -> list[str]:
     hosts = []
     for answer in mx_answers:
         host = answer.split()[-1].rstrip(".").lower()
-        if host:  # "0 ." is a null MX (RFC 7505), which means "no mail here"
+        # Skips "0 ." (a null MX, RFC 7505: "no mail here") and junk seen on
+        # parked domains like "localhost" or "~".
+        if "." in host and not host.startswith("localhost"):
             hosts.append(host)
     return hosts
 

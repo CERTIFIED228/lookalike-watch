@@ -17,6 +17,7 @@ class ScanResult:
     errors: list[str] = field(default_factory=list)
     from_ct: int = 0
     ct_error: str = ""
+    unverified: list[str] = field(default_factory=list)
 
 
 def run_scan(brand: Domain, *, lookup: Lookup, techniques: Iterable[str] | None = None,
@@ -55,7 +56,13 @@ def run_scan(brand: Domain, *, lookup: Lookup, techniques: Iterable[str] | None 
     resolved = resolve_all(to_check, lookup, workers=workers, progress=progress)
 
     findings = []
+    unverified = []
     for name, record in resolved.found.items():
+        if not record.ns:
+            # Every registered domain has NS records. An answer without them
+            # was made up by the resolver (ISP filtering or ad redirects).
+            unverified.append(name)
+            continue
         c = candidates[name]
         source = "ct" if c.technique == "ct-log" else "permutation"
         findings.append(score(c.domain, c.ascii, c.technique, brand, record,
@@ -63,4 +70,5 @@ def run_scan(brand: Domain, *, lookup: Lookup, techniques: Iterable[str] | None 
 
     findings.sort(key=lambda f: (-f.score, f.ascii))
     return ScanResult(findings=findings, checked=len(to_check), errors=resolved.errors,
-                      from_ct=len(ct_names), ct_error=ct_error)
+                      from_ct=len(ct_names), ct_error=ct_error,
+                      unverified=sorted(unverified))
