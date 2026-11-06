@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 
-from .domain import Domain, parse_domain, registered_part
+from .domain import Domain, parse_domain
 from .homoglyphs import skeleton
 from .resolver import DnsRecord
 from .similarity import edit_distance, similarity
@@ -12,9 +12,19 @@ PHISHING_WORDS = [
     "service", "wallet", "auth", "password", "reset", "unlock", "confirm", "refund",
 ]
 
-PARKING_HINTS = [
-    "sedoparking", "parkingcrew", "bodis.com", "abovedomains", "above.com", "dan.com",
-    "afternic", "parklogic", "uniregistrymarket", "hugedomains",
+# Nameservers of domain parking companies.
+PARKING_DNS = [
+    "sedoparking.com", "parkingcrew.net", "bodis.com", "abovedomains.com", "above.com",
+    "dan.com", "afternic.com", "parklogic.com", "uniregistrymarket.link", "hugedomains.com",
+]
+
+# DNS providers with millions of customers. Sharing nameservers with the
+# brand on one of these says nothing about who owns the domain.
+SHARED_DNS = [
+    "cloudflare.com", "domaincontrol.com", "awsdns", "azure-dns", "googledomains.com",
+    "nsone.net", "ultradns", "dynect.net", "dnsmadeeasy.com", "registrar-servers.com",
+    "name-services.com", "digitalocean.com", "linode.com", "hetzner.com", "ovh.net",
+    "gandi.net", "porkbun.com", "dnsimple.com", "akam.net", "wixdns.net", "squarespacedns.com",
 ]
 
 # Registrars big companies use for defensive registrations. Attackers don't:
@@ -147,31 +157,31 @@ def _hosts_under(hosts: list[str], domain: str) -> bool:
 
 
 def _is_parked(record: DnsRecord) -> bool:
-    text = " ".join(record.ns + record.mx)
-    return any(hint in text for hint in PARKING_HINTS)
+    return any(_hosts_under(record.ns, d) for d in PARKING_DNS)
+
+
+def _shared_dns(host: str) -> bool:
+    return any(p in host for p in SHARED_DNS)
 
 
 def ownership_hint(record: DnsRecord, brand: Domain,
                    brand_dns: DnsRecord | None) -> str | None:
-    """Return a reason if the lookalike is probably the brand's own domain."""
-    hosts = record.ns + record.mx
+    """Return a reason if the lookalike is probably the brand's own domain.
+
+    Only nameservers count. Anyone can point MX records at the brand's mail
+    servers to look official, but pointing NS at nameservers you don't
+    control just stops your domain from working.
+    """
     for provider, company in BRAND_PROTECTION.items():
-        if _hosts_under(hosts, provider):
+        if _hosts_under(record.ns, provider):
             return (f"registered through {company}, a brand-protection registrar, "
                     "so most likely a defensive registration")
 
-    if _hosts_under(hosts, brand.fqdn):
-        return f"its DNS or mail is run from {brand.fqdn}, probably owned by the brand"
+    if _hosts_under(record.ns, brand.fqdn):
+        return f"its DNS is run from {brand.fqdn}, probably owned by the brand"
 
     if brand_dns:
-        if set(record.ns) & set(brand_dns.ns):
-            return f"uses the same nameservers as {brand.fqdn}, probably owned by the brand"
-        # Only count mail domains with the brand in the name (paypalcorp.com),
-        # not shared providers like Google or Microsoft that half the internet uses.
-        brand_mail = {registered_part(m) for m in brand_dns.mx}
-        brand_mail = {m for m in brand_mail if m and brand.name in m}
-        shared = brand_mail & {registered_part(m) for m in record.mx}
+        shared = {ns for ns in set(record.ns) & set(brand_dns.ns) if not _shared_dns(ns)}
         if shared:
-            return (f"uses the brand's own mail servers ({sorted(shared)[0]}), "
-                    "probably owned by the brand")
+            return f"uses the same nameservers as {brand.fqdn}, probably owned by the brand"
     return None

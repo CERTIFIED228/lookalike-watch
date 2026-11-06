@@ -3,7 +3,8 @@ from lookalike_watch.resolver import DnsRecord
 from lookalike_watch.scoring import level_for, score
 
 BRAND = parse_domain("paypal.com")
-BRAND_DNS = DnsRecord(ns=["ns1.p01.dynect.net", "ns2.p01.dynect.net"], mx=["mx1.paypal.com"])
+BRAND_DNS = DnsRecord(ns=["a.ns.paypal-dns.example", "b.ns.paypal-dns.example"],
+                      mx=["mx1.paypalcorp.com"])
 
 LIVE_WITH_MAIL = DnsRecord(ns=["ns1.cheap-host.net"], a=["203.0.113.7"], mx=["mail.x.com"])
 LIVE_NO_MAIL = DnsRecord(ns=["ns1.cheap-host.net"], a=["203.0.113.7"])
@@ -42,7 +43,7 @@ def test_mail_and_web_add_risk():
 
 
 def test_shared_nameservers_suggests_brand_owns_it():
-    owned = DnsRecord(ns=["ns1.p01.dynect.net"], a=["64.4.250.36"])
+    owned = DnsRecord(ns=["a.ns.paypal-dns.example"], a=["64.4.250.36"])
     f = score("paypal.net", "paypal.net", "tld-swap", BRAND, owned, brand_dns=BRAND_DNS)
     unowned = score("paypal.net", "paypal.net", "tld-swap", BRAND, LIVE_NO_MAIL,
                     brand_dns=BRAND_DNS)
@@ -98,11 +99,28 @@ def test_nameservers_under_the_brand_domain_mean_owned():
     assert "probably owned by the brand" in f.reasons[0]
 
 
-def test_mail_on_the_brands_own_mail_domain_means_owned():
-    brand_dns = DnsRecord(ns=["ns1.brand.net"], mx=["mx1.paypalcorp.com"])
-    cand = DnsRecord(ns=["ns1.other.net"], a=["1.2.3.4"], mx=["mx2.paypalcorp.com"])
-    f = score("paypal.biz", "paypal.biz", "tld-swap", BRAND, cand, brand_dns=brand_dns)
-    assert "probably owned by the brand" in f.reasons[0]
+def test_mail_records_alone_never_prove_ownership():
+    # Anyone can point their MX at the brand's mail servers. Doing that to
+    # NS records breaks the domain, so only NS counts as evidence.
+    for mx in (["mx1.paypalcorp.com"], ["mx.markmonitor.com"], ["paypal.com"]):
+        spoofed = DnsRecord(ns=["ns1.cheap-host.net"], a=["203.0.113.9"], mx=mx)
+        f = score("paypal-login.com", "paypal-login.com", "combosquat", BRAND, spoofed,
+                  brand_dns=BRAND_DNS)
+        assert not any("owned by the brand" in r or "defensive" in r for r in f.reasons), mx
+        assert f.level in {"high", "critical"}, (mx, f.score)
+
+
+def test_sharing_a_big_dns_provider_is_not_ownership():
+    brand = DnsRecord(ns=["grace.ns.cloudflare.com", "rob.ns.cloudflare.com"])
+    cand = DnsRecord(ns=["grace.ns.cloudflare.com"], a=["1.2.3.4"])
+    f = score("paypl.com", "paypl.com", "omission", BRAND, cand, brand_dns=brand)
+    assert not any("owned by the brand" in r for r in f.reasons)
+
+
+def test_parking_check_matches_whole_domains():
+    record = DnsRecord(ns=["ns1.jordan.com"], a=["1.2.3.4"])
+    f = score("paypl.com", "paypl.com", "omission", BRAND, record)
+    assert not any("parked" in r for r in f.reasons)
 
 
 def test_sharing_gmail_with_the_brand_is_not_ownership():
