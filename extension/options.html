@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>lookalike-watch settings</title>
+  <link rel="stylesheet" href="ui.css">
+  <style>main { max-width: 760px; margin: 0 auto; padding: 24px 16px; }</style>
+</head>
+<body>
+<main>
+  <h1>lookalike-watch</h1>
+  <p class="muted">Warns you when a site is pretending to be another one, or is on a list of known phishing sites. Everything is checked on this computer; the sites you visit are never sent anywhere.</p>
+
+  <section class="card">
+    <h2>How severe is a warning?</h2>
+    <table>
+      <tr><td><span class="sev critical">CRITICAL</span></td><td>On a confirmed phishing list, or looks identical to a brand or one of your sites (e.g. a Cyrillic "а" in paypal).</td></tr>
+      <tr><td><span class="sev high">HIGH</span></td><td>A one-letter typo of a protected brand, the brand plus a scam word (paypal-login, hmrc-tax-refund), or a real domain used as a fake subdomain.</td></tr>
+      <tr><td><span class="sev medium">MEDIUM</span></td><td>Weaker signs, such as a popular site's name on free hosting. Only shown on pages asking for a password or card.</td></tr>
+      <tr><td><span class="sev low">LOW</span></td><td>General warning signs (raw IP address, unencrypted login, mixed alphabets). Only shown on login pages.</td></tr>
+    </table>
+  </section>
+
+  <section class="card">
+    <h2>Phishing lists</h2>
+    <ul class="items" id="feeds"></ul>
+    <p></p>
+    <div class="row"><button id="refresh" class="primary">Update now</button><span id="refresh-msg" class="muted"></span></div>
+  </section>
+
+  <section class="card">
+    <h2>Your sites</h2>
+    <p class="muted">Sites you've logged into on two different days are protected like big brands. You can add one yourself too.</p>
+    <form class="row" id="add-site"><input type="text" id="site" placeholder="mybank.co.uk" aria-label="Domain to protect"><button>Add</button></form>
+    <ul class="items" id="my-sites"></ul>
+  </section>
+
+  <section class="card">
+    <h2>Extra brands to protect</h2>
+    <p class="muted"><span id="brand-count"></span> brands are built in, plus the 10,000 most visited sites. Add one with the word scammers would copy and its real domains.</p>
+    <form class="row" id="add-brand">
+      <input type="text" id="brand-name" placeholder="Name, e.g. Reading Uni" aria-label="Brand name">
+      <input type="text" id="brand-domains" placeholder="Real domains, e.g. reading.ac.uk" aria-label="Real domains, comma separated">
+      <button>Add</button>
+    </form>
+    <ul class="items" id="brands"></ul>
+  </section>
+
+  <section class="card">
+    <h2>Trusted sites</h2>
+    <p class="muted">Sites where you clicked "I trust this site". They never get a warning.</p>
+    <ul class="items" id="trusted"></ul>
+  </section>
+
+  <section class="card">
+    <h2>Import a lookalike-watch scan</h2>
+    <p class="muted">Load a report made with <code>lookalike-watch scan yourbrand.com -o report.json</code>. Every domain scoring 50 or more gets a warning.</p>
+    <div class="row"><input type="file" id="report" accept=".json,application/json" aria-label="Scan report"><button id="clear-scan">Clear imported</button></div>
+    <p id="scan-msg" role="status"></p>
+    <p id="scan-count" class="muted"></p>
+  </section>
+</main>
+<script src="options.js" type="module"></script>
+</body>
+</html>

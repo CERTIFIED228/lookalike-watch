@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "lookalike-watch",
+  "description": "Warns you when a website is a fake copy of a real one, or a known phishing site.",
+  "version": "0.1.0",
+  "permissions": ["storage", "unlimitedStorage", "alarms"],
+  "host_permissions": ["https://raw.githubusercontent.com/*"],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "lookalike-watch",
+    "default_popup": "popup.html",
+    "default_icon": { "16": "icons/16.png", "32": "icons/32.png", "48": "icons/48.png" }
+  },
+  "options_page": "options.html",
+  "icons": { "16": "icons/16.png", "32": "icons/32.png", "48": "icons/48.png", "128": "icons/128.png" }
+}

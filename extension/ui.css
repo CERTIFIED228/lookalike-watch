@@ -1,0 +1,31 @@
+:root {
+  --bg: #f6f8fa; --card: #ffffff; --fg: #1f2328; --muted: #57606a; --line: #d0d7de;
+  --accent: #1f6feb; --danger: #b3261e; --ok: #1a7f37;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #0d1117; --card: #161b22; --fg: #e6edf3; --muted: #9da7b3; --line: #30363d; --accent: #4493f8; --danger: #f85149; --ok: #3fb950; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+h1 { font-size: 20px; margin: 0 0 4px; }
+h2 { font-size: 15px; margin: 0 0 6px; }
+p { margin: 0 0 10px; }
+.muted { color: var(--muted); }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin: 0 0 14px; }
+button, input[type=file]::file-selector-button {
+  font: inherit; border: 1px solid var(--line); background: var(--card); color: var(--fg);
+  border-radius: 6px; padding: 5px 10px; cursor: pointer;
+}
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+input[type=text] { font: inherit; border: 1px solid var(--line); background: var(--bg); color: var(--fg); border-radius: 6px; padding: 5px 8px; min-width: 0; }
+ul.items { list-style: none; padding: 0; margin: 8px 0 0; max-height: 220px; overflow: auto; }
+ul.items li { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 4px 0; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
+.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.row input[type=text] { flex: 1 1 160px; }
+table { border-collapse: collapse; width: 100%; }
+td, th { text-align: left; padding: 4px 8px 4px 0; vertical-align: top; }
+.sev { display: inline-block; color: #fff; font-weight: 700; font-size: 11px; padding: 1px 8px; border-radius: 999px; }
+.sev.critical { background: #b3261e; } .sev.high { background: #c2410c; } .sev.medium { background: #a16207; } .sev.low { background: #475569; }
+.good { color: var(--ok); } .bad { color: var(--danger); }
