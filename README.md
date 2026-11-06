@@ -70,7 +70,7 @@ SCORE  LEVEL     DOMAIN                          TECHNIQUE   TOP REASON
 75     critical  paypa1.com                      homoglyph   looks identical to 'paypal' at a glance
 55     high      paypal-login.com                combosquat  contains the brand name 'paypal'
 28     low       paypl.com                       omission    looks parked (for sale or ad page) - keep an eye on it
-20     low       paypal.net                      tld-swap    uses the same nameservers as paypal.com, probably owned by the brand
+10     low       paypal.net                      tld-swap    uses the same nameservers as paypal.com, probably owned by the brand
 ```
 
 The full list of reasons for each domain is in the JSON/CSV output.
@@ -118,16 +118,17 @@ Points are added up and capped at 100:
 | Signal | Points |
 |---|---|
 | Looks identical to the brand once homoglyphs are normalised | +45 |
-| Within a few edits of the brand (scaled by similarity) | up to +40 |
-| Contains the brand name | +25 |
+| Within a few edits of the brand (scaled by similarity), or contains the brand name (+25), whichever is stronger | up to +40 |
 | Contains a phishing word (login, verify, account...) | +15 |
 | Can receive email (MX records) | +15 |
 | Live web host (A/AAAA records) | +10 |
 | Internationalised (punycode) domain | +10 |
 | Has a certificate in CT logs | +10 |
 | Registered | +5 |
-| Parked (nameservers belong to a parking company) | -10 |
-| Uses the same nameservers as the real domain (probably the brand's own) | -40 |
+| Parked (nameservers or mail belong to a parking company) | -10 |
+| Probably owned by the brand: registered through a brand-protection registrar like MarkMonitor or CSC, DNS or mail run from the brand's domain, same nameservers, or the brand's own mail domain | -40 |
+
+For parked and brand-owned domains, the web, mail and certificate points aren't added. Those servers belong to the parking company or the brand, so they don't make the domain more dangerous.
 
 Levels: **critical** 70+, **high** 50+, **medium** 30+, **low** below that.
 
@@ -152,12 +153,23 @@ pre-commit install
 ## DNS gotchas
 
 - Some ISP resolvers answer for domains that don't exist (to show you an ad page), which would make every candidate look registered. The tool checks for this before every scan and stops if it spots it. Use `--nameserver 1.1.1.1` to get around it.
+- Some filters only lie about names that look like a well-known brand. The check tests a made-up brand name too (`paypal-<random>.com`). And because every registered domain has NS records, any answer without them is treated as made up by the resolver: it's left out of the results and you get a warning.
 - Lookups that time out are counted and reported at the end rather than silently treated as "not registered".
+
+## What a real scan looks like
+
+The first live scan of paypal.com (from a home connection in the UK) found 217 of 267 candidates "registered". Digging into the results showed:
+
+- 88 of them had no NS records and all pointed at the same address on the ISP's network. That was the ISP's DNS filter answering for brand-like names, not real domains. The no-NS check and the brand-name resolver test came out of this.
+- Most of the rest used MarkMonitor nameservers, meaning PayPal had registered them defensively. That's why brand-protection registrars now count as "probably owned".
+- Parked domains were getting points for the parking company's web and mail servers.
+
+After the fixes, the same data gives 2 critical and 12 high instead of 43 and 78. The top ones were worth a human look.
 
 ## Limitations
 
 - Registered does not mean malicious. Plenty of lookalikes are owned by the brand, parked, or just someone's unrelated project. The score is there to help you prioritise, not to give a verdict.
-- The nameserver check only catches defensive registrations that share DNS with the main domain.
+- Ownership detection is heuristic. A brand's country sites (like `paypal.cn`) can use completely different DNS and mail and still be legitimate. Add those with `--allow`.
 - crt.sh is free and often slow. Big brands can time out, so the tool retries with backoff.
 - The homoglyph list covers the common cases, not all of Unicode's confusables.
 - There's no WHOIS/RDAP lookup yet, so domain age isn't part of the score. Newly registered domains are a strong signal, and that's the next thing I'd add.
