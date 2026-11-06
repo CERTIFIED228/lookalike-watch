@@ -1,7 +1,7 @@
 // Pure detection logic: no browser APIs in here, so it runs (and is tested)
 // in plain Node. background.js does the I/O and calls assess().
 
-import { EXTRA_PLATFORMS, GENERIC_WORDS, RISKY_TLDS, SCAM_WORDS, SHARED_HOSTS } from "./brands.js";
+import { CODE_HOSTING, EXTRA_PLATFORMS, GENERIC_WORDS, RISKY_TLDS, SCAM_WORDS, SHARED_HOSTS } from "./brands.js";
 import { toUnicode } from "./punycode.js";
 
 export const SEVERITIES = ["low", "medium", "high", "critical"];
@@ -101,13 +101,14 @@ export function makeSuffixes(icann, platforms) {
   return { icann: new Set(icann), platforms: new Set([...platforms, ...EXTRA_PLATFORMS]) };
 }
 
-// How many labels at the end of the host form a suffix under these rules.
-function suffixLength(labels, rules) {
+// How many labels at the end of the host form a suffix under these rules,
+// and whether that came from a wildcard rule.
+function suffixMatch(labels, rules) {
   for (let k = Math.min(labels.length, 6); k >= 1; k--) {
-    if (rules.has(labels.slice(-k).join("."))) return k;
-    if (k >= 2 && rules.has(`*.${labels.slice(-(k - 1)).join(".")}`)) return k;
+    if (rules.has(labels.slice(-k).join("."))) return { k, wildcard: false };
+    if (k >= 2 && rules.has(`*.${labels.slice(-(k - 1)).join(".")}`)) return { k, wildcard: true };
   }
-  return 0;
+  return { k: 0, wildcard: false };
 }
 
 /**
@@ -121,8 +122,13 @@ export function splitHost(rawHost, suffixes) {
   if (!host || isIpAddress(host) || !host.includes(".")) return null;
   const labels = host.split(".");
 
-  const onPlatform = suffixLength(labels, suffixes.platforms);
-  const icann = suffixLength(labels, suffixes.icann);
+  const platformMatch = suffixMatch(labels, suffixes.platforms);
+  let onPlatform = platformMatch.k;
+  // "ec2-1-2-3-4.compute-1.amazonaws.com" matches "*.compute-1.amazonaws.com"
+  // in full. A wildcard means "every label here is someone's", so the first
+  // label is the tenant.
+  if (platformMatch.wildcard && labels.length === onPlatform) onPlatform -= 1;
+  const icann = suffixMatch(labels, suffixes.icann).k;
   const k = Math.max(onPlatform, icann, 1);
   if (labels.length <= k) return null;
 
@@ -146,17 +152,19 @@ export function splitHost(rawHost, suffixes) {
  * kind "top":   the 10,000 most visited sites in Chrome
  * knownSites:    the next most visited ones, only used to avoid false alarms
  */
-export function buildIndex({ brands = [], topSites = [], mySites = [], knownSites = [] }, suffixes) {
+export function buildIndex({ brands = [], topSites = [], mySites = [], knownSites = [], popularHosts = [] }, suffixes) {
   const entries = [];
   const legit = new Set();
+  const brandDomains = new Set();
   const byDomain = new Map();
   const generic = new Set([...GENERIC_WORDS, ...SCAM_WORDS]);
 
   for (const b of brands) {
-    const entry = { kind: "brand", label: b.label, name: b.name, domain: b.domains[0], typos: b.typos };
+    const entry = { kind: "brand", label: b.label, name: b.name, domain: b.domains[0], domains: b.domains, typos: b.typos };
     entries.push(entry);
     for (const d of b.domains) {
       legit.add(d);
+      brandDomains.add(d);
       if (!byDomain.has(d)) byDomain.set(d, entry);
     }
   }
@@ -199,7 +207,18 @@ export function buildIndex({ brands = [], topSites = [], mySites = [], knownSite
     }
     if (e.kind !== "top" || (e.name.length >= 6 && !generic.has(e.name))) push(byComboName, e.name, e);
   }
-  return { legit, byDomain, byName, bySkeleton, byTopSkeleton, byDeletion, byComboName };
+  return {
+    legit, brandDomains, popularHosts: new Set(popularHosts),
+    byDomain, byName, bySkeleton, byTopSkeleton, byDeletion, byComboName,
+  };
+}
+
+function isUnder(host, domains) {
+  const labels = host.split(".");
+  for (let i = 0; i < labels.length - 1; i++) {
+    if (domains.has(labels.slice(i).join("."))) return true;
+  }
+  return false;
 }
 
 function isLegitHost(parts, index) {
@@ -222,16 +241,32 @@ function isLegitHost(parts, index) {
  */
 export function classifyHost(rawHost, index, suffixes) {
   const host = normaliseHost(rawHost);
-  if (isIpAddress(host)) return { host, kind: "ip", parts: null };
-  if (SHARED_HOSTS.includes(host)) return { host, kind: "shared", parts: null };
+  if (isIpAddress(host)) return { host, kind: "ip", parts: null, ownSubdomain: false };
+  if (SHARED_HOSTS.includes(host)) return { host, kind: "shared", parts: null, ownSubdomain: false };
   const parts = splitHost(host, suffixes);
-  if (!parts) return { host, kind: "shared", parts: null };
-  return { host, kind: isLegitHost(parts, index) ? "legit" : "site", parts };
+  if (!parts) return { host, kind: "shared", parts: null, ownSubdomain: false };
+  const legit = isLegitHost(parts, index);
+  // A subdomain of a popular (but not hand-picked brand) site can still be
+  // its own thing - a customer's site, an old server - so feeds may list it
+  // exactly. Subdomains of the brands themselves are the brand's own
+  // infrastructure (l.instagram.com) and never are.
+  const ownSubdomain = legit && !parts.platform && !isUnder(host, index.brandDomains)
+    && host !== parts.registered && host !== `www.${parts.registered}`
+    && !index.popularHosts?.has(host);
+  return { host, kind: legit ? "legit" : "site", parts, ownSubdomain };
 }
 
 /** "url:" keys for a page and every folder above it, for page-by-page matching. */
 export function pathKeys(host, pathname) {
-  const segments = pathname.split("/").filter(Boolean);
+  // %70hish.html and phish.html are the same page
+  const decode = (s) => {
+    try {
+      return decodeURIComponent(s);
+    } catch {
+      return s;
+    }
+  };
+  const segments = pathname.split("/").filter(Boolean).map(decode);
   return segments.map((_, i) => `url:${host}/${segments.slice(0, i + 1).join("/")}`);
 }
 
@@ -265,27 +300,32 @@ const pick = (e, ifStrong, ifTop) => (strong(e) ? ifStrong : ifTop);
  * contain "ups".
  */
 function brandsInside(name, index) {
-  const found = new Set();
+  const found = new Map(); // entry -> true if the match is a loose one
+  const note = (e, loose) => found.set(e, (found.get(e) ?? true) && loose);
   const compact = name.replaceAll("-", "");
-  for (const token of [...name.split("-"), compact.slice(0, 3), compact.slice(0, 4), compact.slice(-3), compact.slice(-4)]) {
-    for (const e of index.byComboName.get(token) ?? []) {
-      if (e.name.length < 5) found.add(e);
+
+  for (const token of name.split("-")) {
+    for (const e of index.byComboName.get(token) ?? []) note(e, false);
+  }
+  // Short brands run into another word (hmrctaxrefund) are a weaker sign:
+  // dhlparcel.nl is DHL's own.
+  for (const piece of [compact.slice(0, 3), compact.slice(0, 4), compact.slice(-3), compact.slice(-4)]) {
+    for (const e of index.byComboName.get(piece) ?? []) {
+      if (e.name.length < 5) note(e, true);
     }
   }
-  for (const token of name.split("-")) {
-    for (const e of index.byComboName.get(token) ?? []) found.add(e);
-  }
-  // Anywhere in the name for protected brands; only at the start or end for
-  // top sites, or "allviralcollections" would contain lectio.dk.
+  // Longer names anywhere for protected brands, but 5-letter ones only at
+  // the start ("pineapple" isn't Apple); top sites only at the start or end.
   for (let i = 0; i < compact.length; i++) {
     for (let j = i + 5; j <= compact.length; j++) {
       const edge = i === 0 || j === compact.length;
       for (const e of index.byComboName.get(compact.slice(i, j)) ?? []) {
-        if (edge || strong(e)) found.add(e);
+        if (strong(e) ? e.name.length >= 6 || i === 0 : edge) note(e, false);
       }
     }
   }
-  return [...found].filter((e) => e.name !== name);
+  found.forEach((_, e) => e.name === name && found.delete(e));
+  return [...found];
 }
 
 /**
@@ -339,14 +379,20 @@ function lookalikeMatches(parts, index, suffixes) {
   }
 
   // 4. Brand + scam word, and brand names on shared platforms
-  for (const t of brandsInside(name, index)) {
+  for (const [t, loose] of brandsInside(name, index)) {
     const word = scamWordIn(name, t.name);
     if (word) {
-      add(t, pick(t, "high", "medium"), `contains "${t.name}" plus "${word}", a word common in scams`);
+      add(t, loose ? "medium" : pick(t, "high", "medium"),
+        `contains "${t.name}" plus "${word}", a word common in scams`);
     }
     if (parts.platform && strong(t)) {
       add(t, "medium", `puts ${t.label}'s name on ${parts.platform}, where anyone can make a site`);
     }
+  }
+  const exact = index.byName.get(name);
+  if (parts.platform && exact && strong(exact) && !CODE_HOSTING.includes(parts.platform)
+      && !(exact.domains ?? []).some((d) => parts.platform === d || parts.platform.endsWith(`.${d}`))) {
+    add(exact, "medium", `uses the name ${exact.label} on ${parts.platform}, where anyone can make a site`);
   }
 
   if (!parts.sub) return found;

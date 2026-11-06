@@ -18,6 +18,7 @@ const data = (name) => JSON.parse(readFileSync(new URL(`../data/${name}`, import
 const suffixes = makeSuffixes(data("suffixes.json"), data("platforms.json"));
 const index = buildIndex({
   brands: DEFAULT_BRANDS, topSites: data("top-sites.json"), knownSites: data("known-sites.json"),
+  popularHosts: data("popular-hosts.json"),
 }, suffixes);
 
 function rate(file, hasLogin) {

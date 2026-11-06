@@ -31,8 +31,8 @@ export function parseHostList(text, { index, suffixes }) {
   for (const line of text.split("\n")) {
     const host = normaliseHost(line.trim());
     if (!host || host.startsWith("#") || !HOSTNAME.test(host)) continue;
-    const { kind } = classifyHost(host, index, suffixes);
-    if (kind === "site" || kind === "ip") out.add(host);
+    const c = classifyHost(host, index, suffixes);
+    if (c.kind === "site" || c.kind === "ip" || c.ownSubdomain) out.add(host);
   }
   return [...out];
 }
@@ -70,6 +70,7 @@ export function lookupKeys(url, { index, suffixes }) {
   if (u.protocol !== "http:" && u.protocol !== "https:") return [];
   const c = classifyHost(u.hostname, index, suffixes);
   if (c.kind === "ip") return [c.host];
+  if (c.ownSubdomain) return [c.host, ...pathKeys(c.host, u.pathname)];
   if (c.kind !== "site") return pathKeys(c.host, u.pathname);
 
   // Down to the registered domain and no further: never up into a shared

@@ -64,3 +64,27 @@ test("bad urls give no keys", () => {
   assert.deepEqual(lookupKeys("chrome://newtab", ctx), []);
   assert.deepEqual(lookupKeys("nonsense", ctx), []);
 });
+
+test("feed entries on subdomains of ordinary popular sites are kept as exact hosts", () => {
+  const text = ["evil-tenant.jimdofree.com", "phish.b-cdn.net", "att-service-admin.my.canva.site",
+    "ec2-100-26-145-53.compute-1.amazonaws.com"].join("\n");
+  assert.deepEqual(parseHostList(text, ctx), text.split("\n"));
+});
+
+test("whole IPFS gateways and link shorteners are never listed as hosts", () => {
+  const text = ["dweb.link", "w3s.link", "nftstorage.link", "is.gd", "q-r.to", "openinapp.link"].join("\n");
+  assert.deepEqual(parseHostList(text, ctx), []);
+});
+
+test("paths are compared after decoding percent-escapes", () => {
+  const listed = parseUrlList("https://s3.us-east-1.amazonaws.com/evil-bucket/phish.html", ctx);
+  const keys = lookupKeys("https://s3.us-east-1.amazonaws.com/evil-bucket/%70hish.html", ctx);
+  assert.ok(keys.includes(listed[0]), JSON.stringify({ listed, keys }));
+});
+
+test("popular subdomains are never listed as a whole host", () => {
+  const popular = { ...ctx, index: makeIndex({ knownSites: ["roku.com"] }) };
+  popular.index.popularHosts = new Set(["support.roku.com"]);
+  assert.deepEqual(parseHostList("support.roku.com\nevil-tenant.roku.com", popular), ["evil-tenant.roku.com"]);
+  assert.deepEqual(lookupKeys("https://support.roku.com/x", popular), ["url:support.roku.com/x"]);
+});

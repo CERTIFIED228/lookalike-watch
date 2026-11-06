@@ -21,9 +21,10 @@ async function bundled(path) {
 }
 
 async function buildEverything() {
-  const [topSites, knownSites, icann, platforms, settings] = await Promise.all([
+  const [topSites, knownSites, popularHosts, icann, platforms, settings] = await Promise.all([
     bundled("data/top-sites.json"),
     bundled("data/known-sites.json"),
+    bundled("data/popular-hosts.json"),
     bundled("data/suffixes.json"),
     bundled("data/platforms.json"),
     chrome.storage.local.get({ customBrands: [], mySites: [] }),
@@ -33,6 +34,7 @@ async function buildEverything() {
     brands: [...DEFAULT_BRANDS, ...settings.customBrands],
     topSites,
     knownSites,
+    popularHosts,
     mySites: settings.mySites,
   }, suffixes);
   return { index, suffixes };

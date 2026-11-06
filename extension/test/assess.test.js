@@ -268,7 +268,6 @@ test("short scam words must stand alone", () => {
   assert.equal(check("https://amazonfinest.com/").severity, null);
   assert.equal(check("https://googletrackers.com/").severity, null);
   assert.equal(check("https://paypalverifyaccount.com/").severity, "high");
-  assert.equal(check("https://hmrctaxrefund.com/").severity, "high");
 });
 
 test("more home network names stay quiet", () => {
@@ -299,4 +298,35 @@ test("government services on service.gov.uk are trusted", () => {
 
 test("Chinese or Japanese mixed with Latin isn't flagged as mixed alphabets", () => {
   assert.equal(onLoginPage("https://xn--tv-vc9j20f.com/").show, false);
+});
+
+// --- verification round ----------------------------------------------------------------
+
+test("DHL's own parcel sites aren't flagged", () => {
+  for (const url of ["https://dhlparcel.nl/", "https://my.dhlparcel.be/", "https://www.dhlparcel.co.uk/"]) {
+    assert.equal(check(url).severity, null, url);
+  }
+});
+
+test("a short brand run into another word is only medium", () => {
+  assert.equal(check("https://hmrctaxrefund.com/").severity, "medium");
+  assert.equal(check("https://hmrc-tax-refund.com/").severity, "high");
+});
+
+test("five-letter brands only count at the start of a run-together name", () => {
+  assert.equal(check("https://pineapple-delivery.com/").severity, null);
+  assert.equal(check("https://appleid-verify.com/").severity, "high");
+});
+
+test("multi-tenant sites the suffix list misses are split per tenant", () => {
+  for (const url of ["https://paypal-login.jimdofree.com/", "https://paypal-login.tumblr.com/",
+    "https://paypal-login.wpengine.com/", "https://paypal-login.sharepoint.com/"]) {
+    assert.equal(check(url).severity, "high", url);
+  }
+  assert.equal(check("https://microsoft.sharepoint.com/").severity, null);
+});
+
+test("a tenant named exactly after the brand is medium on shared platforms", () => {
+  assert.equal(check("https://hmrc.vercel.app/").severity, "medium");
+  assert.equal(check("https://paypal.github.io/").severity, null);   // brands' own dev pages
 });

@@ -42,7 +42,7 @@ export const DEFAULT_BRANDS = [
   { label: "Royal Mail", name: "royalmail", domains: ["royalmail.com", "royalmailgroup.com"] },
   { label: "Evri", name: "evri", domains: ["evri.com"] },
   { label: "DPD", name: "dpd", domains: ["dpd.co.uk", "dpd.com", "dpdlocal.co.uk"] },
-  { label: "DHL", name: "dhl", domains: ["dhl.com", "dhl.co.uk"] },
+  { label: "DHL", name: "dhl", domains: ["dhl.com", "dhl.co.uk", "dhl.de", "dhlparcel.co.uk", "dhlparcel.nl", "dhlparcel.be", "dhlparcel.pl", "dhlparcel.es", "dhlparcel.com"] },
   { label: "UPS", name: "ups", domains: ["ups.com"] },
   { label: "Post Office", name: "postoffice", domains: ["postoffice.co.uk"] },
   { label: "InPost", name: "inpost", domains: ["inpost.co.uk", "inpost.eu"] },
@@ -73,8 +73,16 @@ export const SCAM_WORDS = [
 export const EXTRA_PLATFORMS = [
   "wordpress.com", "weebly.com", "weeblysite.com", "000webhostapp.com", "godaddysites.com",
   "surge.sh", "filesusr.com", "*.web.core.windows.net", "ipfs.dweb.link", "ipns.dweb.link",
-  "ipfs.w3s.link", "ipfs.nftstorage.link",
+  "ipfs.w3s.link", "ipfs.nftstorage.link", "jimdofree.com", "jimdosite.com", "tumblr.com",
+  "hostingersite.com", "wpengine.com", "wpenginepowered.com", "b-cdn.net", "sharepoint.com",
+  "my.site.com", "squarespace.com", "webnode.com", "webnode.page", "work.gd", "jumpingcrab.com",
+  "typeform.com", "zendesk.com", "freshdesk.com", "my.canva.site", "mystrikingly.com",
+  "strikingly.com", "yolasite.com", "site123.me",
 ];
+
+// Where brands publish their own developer pages, so "paypal.github.io"
+// isn't suspicious the way "paypal.vercel.app" is.
+export const CODE_HOSTING = ["github.io", "gitlab.io"];
 
 // Top sites whose name is an ordinary word (account.gov.uk, office.com).
 // They're never treated as a brand inside another name.
@@ -96,7 +104,9 @@ export const SHARED_HOSTS = [
   "onedrive.live.com", "1drv.ms", "forms.office.com", "dropbox.com", "www.dropbox.com",
   "github.com", "raw.githubusercontent.com", "gitlab.com", "bit.ly", "tinyurl.com",
   "t.co", "linktr.ee", "canva.com", "www.canva.com", "ipfs.io", "cloudflare-ipfs.com",
-  "gateway.pinata.cloud",
+  "gateway.pinata.cloud", "dweb.link", "w3s.link", "nftstorage.link", "4everland.io",
+  "ipfs.fleek.co", "is.gd", "bitly.ws", "q-r.to", "openinapp.link", "mylink.la", "cutt.ly",
+  "rb.gy", "t.ly", "shorturl.at", "ow.ly", "buff.ly", "rebrand.ly", "tiny.cc", "s.id", "goo.gl",
 ];
 
 // Endings with far more phishing than their size would suggest (Interisle

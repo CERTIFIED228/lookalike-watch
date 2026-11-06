@@ -76,3 +76,9 @@ test("a trailing dot doesn't change anything", () => {
 test("digits are swapped back before two-letter tricks", () => {
   assert.equal(skeleton("ic1oud"), skeleton("icloud"));
 });
+
+test("a host that exactly matches a wildcard platform rule is its own tenant", () => {
+  const parts = splitHost("ec2-100-26-145-53.compute-1.amazonaws.com", SUFFIXES);
+  assert.equal(parts.name, "ec2-100-26-145-53");
+  assert.equal(parts.platform, "compute-1.amazonaws.com");
+});
