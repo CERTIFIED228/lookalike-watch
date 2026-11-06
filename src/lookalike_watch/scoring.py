@@ -168,20 +168,26 @@ def ownership_hint(record: DnsRecord, brand: Domain,
                    brand_dns: DnsRecord | None) -> str | None:
     """Return a reason if the lookalike is probably the brand's own domain.
 
-    Only nameservers count. Anyone can point MX records at the brand's mail
-    servers to look official, but pointing NS at nameservers you don't
-    control just stops your domain from working.
+    Only nameservers count, and all of them have to agree. Anyone can point
+    MX records at the brand's mail servers, or add one of the brand's
+    nameservers next to their own (resolvers just retry the one that works).
+    Pointing every nameserver at servers you don't control stops the domain
+    resolving at all.
     """
+    ns = record.ns
+    if not ns:
+        return None
     for provider, company in BRAND_PROTECTION.items():
-        if _hosts_under(record.ns, provider):
+        if all(_hosts_under([n], provider) for n in ns):
             return (f"registered through {company}, a brand-protection registrar, "
                     "so most likely a defensive registration")
 
-    if _hosts_under(record.ns, brand.fqdn):
+    if all(_hosts_under([n], brand.fqdn) for n in ns):
         return f"its DNS is run from {brand.fqdn}, probably owned by the brand"
 
-    if brand_dns:
-        shared = {ns for ns in set(record.ns) & set(brand_dns.ns) if not _shared_dns(ns)}
-        if shared:
-            return f"uses the same nameservers as {brand.fqdn}, probably owned by the brand"
+    # Every nameserver has to be one the brand uses too, and at least one of
+    # them the brand's own rather than a provider like Cloudflare that
+    # millions of domains share.
+    if brand_dns and set(ns) <= set(brand_dns.ns) and not all(_shared_dns(n) for n in ns):
+        return f"uses the same nameservers as {brand.fqdn}, probably owned by the brand"
     return None

@@ -137,3 +137,25 @@ def test_parking_infrastructure_does_not_count_as_web_or_mail():
     assert "parked" in f.reasons[0]
     assert not any("email" in r for r in f.reasons)
     assert f.level in {"low", "medium"}
+
+
+def test_one_borrowed_nameserver_doesnt_prove_ownership():
+    # A mixed set still resolves (resolvers retry the working one), so an
+    # attacker can add one of the brand's nameservers to look official.
+    mixed = [
+        ["ns1.evil-dns.net", "ns1.markmonitor.com"],
+        ["ns1.evil-dns.net", "ns1.paypal.com"],
+        ["ns1.evil-dns.net", "a.ns.paypal-dns.example"],
+    ]
+    for ns in mixed:
+        record = DnsRecord(ns=ns, a=["203.0.113.9"])
+        f = score("paypal-login.com", "paypal-login.com", "combosquat", BRAND, record,
+                  brand_dns=BRAND_DNS)
+        assert not any("owned by the brand" in r or "defensive" in r for r in f.reasons), ns
+
+
+def test_brand_domains_on_their_own_and_a_shared_provider_are_owned():
+    brand = DnsRecord(ns=["ns1-pchnet.paypal.com", "pdns100.ultradns.com"])
+    cand = DnsRecord(ns=["pdns100.ultradns.com", "ns1-pchnet.paypal.com"], a=["64.4.250.36"])
+    f = score("paypal.co", "paypal.co", "tld-swap", BRAND, cand, brand_dns=brand)
+    assert "owned by the brand" in f.reasons[0]
