@@ -74,3 +74,48 @@ def test_levels():
     assert level_for(55) == "high"
     assert level_for(35) == "medium"
     assert level_for(10) == "low"
+
+
+def test_brand_plus_one_letter_is_not_counted_twice():
+    # "paypalc" is 1 edit away AND contains "paypal" - that's one signal, not two.
+    f = score("paypalc.com", "paypalc.com", "addition", BRAND, LIVE_WITH_MAIL)
+    assert any("1 edit" in r for r in f.reasons)
+    assert not any("contains the brand name" in r for r in f.reasons)
+    assert f.score == 64
+
+
+def test_brand_protection_registrar_means_defensive_registration():
+    mm = DnsRecord(ns=["ns1.markmonitor.com", "ns7.markmonitor.com"], a=["3.33.139.32"],
+                   mx=["bh.markmonitor.com"])
+    f = score("paypal.net", "paypal.net", "tld-swap", BRAND, mm, brand_dns=BRAND_DNS)
+    assert "MarkMonitor" in f.reasons[0]
+    assert f.level == "low"
+
+
+def test_nameservers_under_the_brand_domain_mean_owned():
+    own = DnsRecord(ns=["ns1-pchnet.paypal.com"], a=["64.4.250.36"])
+    f = score("paypal.de", "paypal.de", "tld-swap", BRAND, own, brand_dns=BRAND_DNS)
+    assert "probably owned by the brand" in f.reasons[0]
+
+
+def test_mail_on_the_brands_own_mail_domain_means_owned():
+    brand_dns = DnsRecord(ns=["ns1.brand.net"], mx=["mx1.paypalcorp.com"])
+    cand = DnsRecord(ns=["ns1.other.net"], a=["1.2.3.4"], mx=["mx2.paypalcorp.com"])
+    f = score("paypal.biz", "paypal.biz", "tld-swap", BRAND, cand, brand_dns=brand_dns)
+    assert "probably owned by the brand" in f.reasons[0]
+
+
+def test_sharing_gmail_with_the_brand_is_not_ownership():
+    brand_dns = DnsRecord(ns=["ns1.brand.net"], mx=["aspmx.l.google.com"])
+    cand = DnsRecord(ns=["ns1.other.net"], a=["1.2.3.4"], mx=["alt1.aspmx.l.google.com"])
+    f = score("paypl.com", "paypl.com", "omission", BRAND, cand, brand_dns=brand_dns)
+    assert not any("owned by the brand" in r for r in f.reasons)
+
+
+def test_parking_infrastructure_does_not_count_as_web_or_mail():
+    parked = DnsRecord(ns=["ns2.abovedomains.com"], a=["103.224.182.239"],
+                       mx=["park-mx.above.com"])
+    f = score("paypl.com", "paypl.com", "omission", BRAND, parked)
+    assert "parked" in f.reasons[0]
+    assert not any("email" in r for r in f.reasons)
+    assert f.level in {"low", "medium"}

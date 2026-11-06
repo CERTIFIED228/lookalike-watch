@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 
-from .domain import Domain, parse_domain
+from .domain import Domain, parse_domain, registered_part
 from .homoglyphs import skeleton
 from .resolver import DnsRecord
 from .similarity import edit_distance, similarity
@@ -13,9 +13,22 @@ PHISHING_WORDS = [
 ]
 
 PARKING_HINTS = [
-    "sedoparking", "parkingcrew", "bodis", "above.com", "dan.com", "afternic",
-    "parklogic", "domaincontrol-park", "uniregistrymarket", "huge-domains",
+    "sedoparking", "parkingcrew", "bodis.com", "abovedomains", "above.com", "dan.com",
+    "afternic", "parklogic", "uniregistrymarket", "hugedomains",
 ]
+
+# Registrars big companies use for defensive registrations. Attackers don't:
+# they're expensive and check who you are. On a real scan of paypal.com, most
+# registered lookalikes turned out to be PayPal's own, through MarkMonitor.
+BRAND_PROTECTION = {
+    "markmonitor.com": "MarkMonitor",
+    "cscdns.net": "CSC",
+    "cscdns.uk": "CSC",
+    "comlaude-dns.com": "Com Laude",
+    "comlaude-dns.net": "Com Laude",
+    "comlaude-dns.eu": "Com Laude",
+    "safenames.net": "Safenames",
+}
 
 
 @dataclass
@@ -67,14 +80,20 @@ def score(domain: str, ascii_domain: str, technique: str, brand: Domain,
         points += 45
         reasons.append(f"looks identical to '{brand.name}' at a glance")
     else:
+        # "paypalc" is both one edit away and contains "paypal". That's one
+        # signal, so only the stronger of the two counts.
+        options = []
         sim = similarity(look, brand_look)
         if sim >= 0.75:
             edits = edit_distance(look, brand_look)
-            points += round(40 * sim)
-            reasons.append(f"{edits} edit{'s' if edits != 1 else ''} away from '{brand.name}'")
+            plural = "s" if edits != 1 else ""
+            options.append((round(40 * sim), f"{edits} edit{plural} away from '{brand.name}'"))
         if brand_look in look:
-            points += 25
-            reasons.append(f"contains the brand name '{brand.name}'")
+            options.append((25, f"contains the brand name '{brand.name}'"))
+        if options:
+            best = max(options)
+            points += best[0]
+            reasons.append(best[1])
 
     words = [w for w in PHISHING_WORDS if w in name]
     if words:
@@ -88,26 +107,32 @@ def score(domain: str, ascii_domain: str, technique: str, brand: Domain,
     points += 5
     reasons.append("is registered")
 
-    if record.live:
-        points += 10
-        reasons.append(f"has a live web host ({(record.a + record.aaaa)[0]})")
-    if record.has_mail:
-        points += 15
-        reasons.append("can send/receive email (MX records), so it can be used for phishing mail")
-    if in_ct:
-        points += 10
-        reasons.append("has a TLS certificate in CT logs (someone set up HTTPS for it)")
+    owner = ownership_hint(record, brand, brand_dns)
+    parked = not owner and _is_parked(record)
 
-    # These two change what you'd actually do about a domain, so they go to
-    # the front of the list (that's what the table and alerts show).
-    ns_text = " ".join(record.ns)
-    if any(hint in ns_text for hint in PARKING_HINTS):
+    # For brand-owned and parked domains the web server and mail server belong
+    # to the brand or the parking company, so they don't add risk.
+    if not owner and not parked:
+        if record.live:
+            points += 10
+            reasons.append(f"has a live web host ({(record.a + record.aaaa)[0]})")
+        if record.has_mail:
+            points += 15
+            reasons.append(
+                "can send/receive email (MX records), so it can be used for phishing mail"
+            )
+        if in_ct:
+            points += 10
+            reasons.append("has a TLS certificate in CT logs (someone set up HTTPS for it)")
+
+    # These change what you'd actually do about a domain, so they go to the
+    # front of the list (that's what the table and alerts show).
+    if parked:
         points -= 10
         reasons.insert(0, "looks parked (for sale or ad page) - keep an eye on it")
-
-    if brand_dns and set(record.ns) & set(brand_dns.ns):
+    if owner:
         points -= 40
-        reasons.insert(0, f"uses the same nameservers as {brand.fqdn}, probably owned by the brand")
+        reasons.insert(0, owner)
 
     points = max(0, min(100, points))
     return Finding(
@@ -115,3 +140,38 @@ def score(domain: str, ascii_domain: str, technique: str, brand: Domain,
         score=points, level=level_for(points), reasons=reasons,
         a=record.a + record.aaaa, mx=record.mx, ns=record.ns,
     )
+
+
+def _hosts_under(hosts: list[str], domain: str) -> bool:
+    return any(h == domain or h.endswith("." + domain) for h in hosts)
+
+
+def _is_parked(record: DnsRecord) -> bool:
+    text = " ".join(record.ns + record.mx)
+    return any(hint in text for hint in PARKING_HINTS)
+
+
+def ownership_hint(record: DnsRecord, brand: Domain,
+                   brand_dns: DnsRecord | None) -> str | None:
+    """Return a reason if the lookalike is probably the brand's own domain."""
+    hosts = record.ns + record.mx
+    for provider, company in BRAND_PROTECTION.items():
+        if _hosts_under(hosts, provider):
+            return (f"registered through {company}, a brand-protection registrar, "
+                    "so most likely a defensive registration")
+
+    if _hosts_under(hosts, brand.fqdn):
+        return f"its DNS or mail is run from {brand.fqdn}, probably owned by the brand"
+
+    if brand_dns:
+        if set(record.ns) & set(brand_dns.ns):
+            return f"uses the same nameservers as {brand.fqdn}, probably owned by the brand"
+        # Only count mail domains with the brand in the name (paypalcorp.com),
+        # not shared providers like Google or Microsoft that half the internet uses.
+        brand_mail = {registered_part(m) for m in brand_dns.mx}
+        brand_mail = {m for m in brand_mail if m and brand.name in m}
+        shared = brand_mail & {registered_part(m) for m in record.mx}
+        if shared:
+            return (f"uses the brand's own mail servers ({sorted(shared)[0]}), "
+                    "probably owned by the brand")
+    return None
