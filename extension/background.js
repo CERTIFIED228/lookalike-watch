@@ -263,6 +263,18 @@ async function fromExtension(msg) {
     case "addBrand":
       await addBrand(msg.label, msg.domains);
       return { ok: true };
+    case "preview": {
+      // "Check a link" in the popup: judge it as if it were a login page,
+      // without ever loading it.
+      const text = String(msg.url ?? "").trim();
+      const url = /^https?:\/\//i.test(text) ? text : `https://${text}`;
+      try {
+        new URL(url);
+      } catch {
+        return { error: "That doesn't look like a link." };
+      }
+      return check(url, true);
+    }
     default:
       return { error: `unknown message ${msg.type}` };
   }

@@ -4,11 +4,20 @@
   <meta charset="utf-8">
   <title>lookalike-watch</title>
   <link rel="stylesheet" href="ui.css">
-  <style>body { width: 320px; padding: 14px; } .card { margin: 10px 0 0; padding: 12px; }</style>
+  <style>body { width: 320px; padding: 14px; } .card { margin: 10px 0 0; padding: 12px; } #link-result { margin-top: 10px; }</style>
 </head>
 <body>
   <h1>lookalike-watch</h1>
   <div id="verdict" class="card"><p class="muted">Checking this page...</p></div>
+  <form id="link-form" class="card">
+    <h2>Check a link</h2>
+    <p class="muted">Paste a link from a text or email to see what lookalike-watch thinks, without opening it.</p>
+    <div class="row">
+      <input type="text" id="link" placeholder="royalmail-redelivery.com" aria-label="Link to check" autocomplete="off">
+      <button id="check-link" class="primary">Check</button>
+    </div>
+    <div id="link-result" role="status"></div>
+  </form>
   <p class="muted" id="feeds"></p>
   <button id="settings">Settings</button>
   <script src="popup.js" type="module"></script>

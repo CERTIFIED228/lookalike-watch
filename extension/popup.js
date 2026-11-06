@@ -7,6 +7,27 @@ function line(tag, text, cls) {
   return el;
 }
 
+function describe(target, verdict) {
+  target.replaceChildren();
+  if (!verdict.severity) {
+    target.append(line("p", "No warning signs.", "good"));
+    return;
+  }
+  target.append(line("span", verdict.severity.toUpperCase(), `sev ${verdict.severity}`), line("h2", verdict.title));
+  const ul = document.createElement("ul");
+  verdict.reasons.forEach((r) => ul.append(line("li", r)));
+  target.append(ul);
+  if (verdict.realDomain) target.append(line("p", `The real site is ${verdict.realDomain}`));
+}
+
+document.getElementById("link-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const result = document.getElementById("link-result");
+  const reply = await chrome.runtime.sendMessage({ type: "preview", url: document.getElementById("link").value });
+  if (reply.error) result.replaceChildren(line("p", reply.error, "bad"));
+  else describe(result, reply);
+});
+
 const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
 const saved = tab ? (await chrome.storage.session.get(`tab:${tab.id}`))[`tab:${tab.id}`] : null;
 box.replaceChildren();
@@ -21,11 +42,7 @@ if (!saved || saved.url !== tab.url) {
   saved.verdict.reasons.forEach((r) => ul.append(line("li", r)));
   box.append(ul);
 } else {
-  const v = saved.verdict;
-  box.append(line("span", v.severity.toUpperCase(), `sev ${v.severity}`), line("h2", v.title));
-  const ul = document.createElement("ul");
-  v.reasons.forEach((r) => ul.append(line("li", r)));
-  box.append(ul);
+  describe(box, saved.verdict);
 }
 
 const status = await chrome.runtime.sendMessage({ type: "status" });

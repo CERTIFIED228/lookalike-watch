@@ -130,6 +130,10 @@ Plus anything from a `lookalike-watch scan` report you import on the settings pa
 
 The notification has a **Go to the real site** / **Leave this site** button and an **I trust this site** link for false alarms.
 
+### Check a link without opening it
+
+Click the toolbar icon and paste a link (from a text message, say) into **Check a link**. You get the same verdict and reasons the notification would give on a login page, without the site ever being loaded.
+
 ### Keeping the extension itself safe
 
 A phishing page runs its own scripts right next to the notification, so the extension doesn't trust the page:

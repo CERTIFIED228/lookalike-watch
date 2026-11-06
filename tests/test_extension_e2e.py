@@ -341,3 +341,20 @@ def test_feed_download_switches_to_the_new_list(browser):
     assert "Known phishing site" in text
     page.close()
     FEED_FIXTURES.clear()
+
+
+def test_check_a_link_without_visiting_it(browser):
+    ctx, worker = browser
+    ext_id = worker.url.split("/")[2]
+    popup = ctx.new_page()
+    popup.goto(f"chrome-extension://{ext_id}/popup.html")
+    popup.fill("#link", "paypa1.com/login")
+    popup.click("#check-link")
+    result = popup.locator("#link-result")
+    playwright.expect(result).to_contain_text("CRITICAL")
+    playwright.expect(result).to_contain_text("looks identical to paypal.com")
+
+    popup.fill("#link", "https://www.paypal.com/")
+    popup.click("#check-link")
+    playwright.expect(popup.locator("#link-result")).to_contain_text("No warning signs")
+    popup.close()
