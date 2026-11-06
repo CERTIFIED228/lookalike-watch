@@ -25,6 +25,8 @@ LOGIN = (
 
 # Fake feed downloads, filled in by the feed test. Empty means "offline".
 FEED_FIXTURES = {}
+# Pages with their own HTML, for the attack tests. Keyed by URL prefix.
+PAGES = {}
 
 
 def serve(route):
@@ -36,7 +38,9 @@ def serve(route):
             if name in url:
                 return route.fulfill(status=200, content_type="text/plain", body=body)
         return route.abort()
-    body = LOGIN if "/login" in url else PLAIN
+    body = next((html for prefix, html in PAGES.items() if url.startswith(prefix)), None)
+    if body is None:
+        body = LOGIN if "/login" in url else PLAIN
     route.fulfill(status=200, content_type="text/html", body=body)
 
 
@@ -67,10 +71,25 @@ def _alert_nodes(page):
     stack = [doc]
     while stack:
         node = stack.pop()
-        if node.get("nodeName") == "LOOKALIKE-WATCH-ALERT":
-            return cdp, node["shadowRoots"][0]
+        if "data-lookalike-watch" in node.get("attributes", [])[::2] and node.get("shadowRoots"):
+            return cdp, node, node["shadowRoots"][0]
         stack.extend(node.get("children", []) + node.get("shadowRoots", []))
-    return cdp, None
+    return cdp, None, None
+
+
+def card_is_visible(page):
+    """True if the card is on screen: laid out, not transparent, not hidden."""
+    cdp, host, _ = _alert_nodes(page)
+    if host is None:
+        return False
+    try:
+        cdp.send("DOM.getBoxModel", {"nodeId": host["nodeId"]})
+    except Exception:
+        return False  # display: none has no box
+    cdp.send("CSS.enable")
+    computed = cdp.send("CSS.getComputedStyleForNode", {"nodeId": host["nodeId"]})
+    style = {s["name"]: s["value"] for s in computed["computedStyle"]}
+    return style["opacity"] == "1" and style["visibility"] == "visible"
 
 
 def _walk(node):
@@ -80,7 +99,7 @@ def _walk(node):
 
 
 def alert_text(page):
-    _, root = _alert_nodes(page)
+    _, _, root = _alert_nodes(page)
     if root is None:
         return ""
     words = []
@@ -94,7 +113,7 @@ def alert_text(page):
 
 def click_alert_button(page, text):
     """A real mouse click, like a person would make (isTrusted = true)."""
-    cdp, root = _alert_nodes(page)
+    cdp, _, root = _alert_nodes(page)
     for node in _walk(root):
         if node.get("nodeName") == "BUTTON" and any(
             text in c.get("nodeValue", "") for c in node.get("children", [])
@@ -137,13 +156,8 @@ def test_the_real_site_is_left_alone(browser):
 def test_toolbar_badge_marks_a_flagged_tab(browser):
     ctx, worker = browser
     page, _ = visit(ctx, "https://paypal-login.com/")
-    # The extension doesn't ask for the "tabs" permission, so find the tab
-    # through the verdict it saved for the popup.
-    badge = worker.evaluate("""async () => {
-        const saved = await chrome.storage.session.get(null);
-        const key = Object.keys(saved).find((k) => saved[k].url.startsWith("https://paypal-login.com/"));
-        return chrome.action.getBadgeText({ tabId: Number(key.split(":")[1]) });
-    }""")
+    tab_id = _tab_id(worker, "https://paypal-login.com/")
+    badge = worker.evaluate(f"chrome.action.getBadgeText({{ tabId: {tab_id} }})")
     assert badge == "!"
     page.close()
 
@@ -168,11 +182,28 @@ def test_known_phishing_site_from_the_feed(browser):
     page.close()
 
 
-def test_trusting_a_site_silences_it(browser):
-    ctx, _ = browser
+def _tab_id(worker, url_prefix):
+    # The extension doesn't ask for the "tabs" permission, so find the tab
+    # through the verdict it saved for the popup.
+    return worker.evaluate(f"""async () => {{
+        const saved = await chrome.storage.session.get(null);
+        const key = Object.keys(saved).find((k) => k.startsWith("tab:")
+            && saved[k].url.startsWith("{url_prefix}"));
+        return Number(key.split(":")[1]);
+    }}""")
+
+
+def test_trusting_a_site_from_the_popup_silences_it(browser):
+    ctx, worker = browser
     page, text = visit(ctx, "https://arnazon.co.uk/")
     assert "CRITICAL" in text
-    click_alert_button(page, "trust")
+    tab_id = _tab_id(worker, "https://arnazon.co.uk/")
+    # What the popup's "I trust this site" button sends
+    options = ctx.new_page()
+    options.goto(f"chrome-extension://{worker.url.split('/')[2]}/options.html")
+    reply = options.evaluate(f"chrome.runtime.sendMessage({{ type: 'trustTab', tabId: {tab_id} }})")
+    assert reply == {"ok": True}
+    options.close()
     page.wait_for_timeout(500)
     assert alert_text(page) == ""
     page.reload()
@@ -181,24 +212,86 @@ def test_trusting_a_site_silences_it(browser):
     page.close()
 
 
-def test_a_page_cannot_reach_into_the_notification(browser):
-    ctx, worker = browser
+def test_the_page_has_no_trust_button_to_click(browser):
+    ctx, _ = browser
     page, text = visit(ctx, "https://paypal-verify.com/")
     assert "HIGH" in text
-    # What a phishing page's own script sees: no way in to click "trust"
-    assert page.evaluate("document.querySelector('lookalike-watch-alert').shadowRoot") is None
-    trusted = worker.evaluate("async () => (await chrome.storage.local.get({trusted: []})).trusted")
-    assert "paypal-verify.com" not in trusted
+    assert "I trust this site" not in text
+    assert "toolbar" in text
+    # And what the page's own scripts see: no way into the card
+    assert page.evaluate("document.querySelector('[data-lookalike-watch]').shadowRoot") is None
     page.close()
 
 
-def test_a_page_cannot_remove_the_notification(browser):
+def test_a_page_cannot_hide_the_card_with_css(browser):
+    PAGES["https://amazon-refund.co.uk/"] = (
+        "<!doctype html><style>"
+        "div { display: none !important; opacity: 0 !important; }"
+        "[popover], :popover-open { visibility: hidden !important; }"
+        "@layer x { div { display: none !important; } }"
+        "</style><h1>Refund</h1>"
+    )
     ctx, _ = browser
     page, text = visit(ctx, "https://amazon-refund.co.uk/")
     assert "HIGH" in text
-    page.evaluate("document.querySelector('lookalike-watch-alert').remove()")
-    page.wait_for_timeout(300)
-    assert "HIGH" in alert_text(page)
+    assert card_is_visible(page)
+    page.close()
+
+
+def test_a_page_cannot_hide_or_remove_the_card_with_script(browser):
+    ctx, _ = browser
+    page, text = visit(ctx, "https://amazon-verify.co.uk/")
+    assert "HIGH" in text
+    for attack in [
+        "document.querySelector('[data-lookalike-watch]').remove()",
+        "document.querySelector('[data-lookalike-watch]')"
+        ".style.setProperty('display', 'none', 'important')",
+        "document.querySelector('[data-lookalike-watch]').hidePopover()",
+        "document.querySelector('[data-lookalike-watch]').removeAttribute('style')",
+    ]:
+        page.evaluate(attack)
+        page.wait_for_timeout(300)
+        assert card_is_visible(page), attack
+    page.close()
+
+
+def test_a_page_cannot_dodge_a_feed_listing_with_replace_state(browser):
+    ctx, worker = browser
+    worker.evaluate("""() => new Promise((resolve) => {
+        const req = indexedDB.open("lookalike-watch", 1);
+        req.onupgradeneeded = () => req.result.createObjectStore("phish");
+        req.onsuccess = () => {
+            const tx = req.result.transaction("phish", "readwrite");
+            const key = "openphish@1\turl:storage.googleapis.com/evil-bucket/phish.html";
+            tx.objectStore("phish").put(1, key);
+            tx.oncomplete = () => resolve();
+        };
+    })""")
+    worker.evaluate("""async () => {
+        const { feedStatus } = await chrome.storage.local.get({ feedStatus: {} });
+        feedStatus.openphish = { generation: "openphish@1", count: 1, updatedAt: Date.now() };
+        await chrome.storage.local.set({ feedStatus });
+    }""")
+    PAGES["https://storage.googleapis.com/evil-bucket/phish.html"] = (
+        "<!doctype html>"
+        "<script>history.replaceState(null, '', '/innocent-bucket/menu.pdf')</script>"
+        "<h1>Sign in</h1>"
+    )
+    page, text = visit(ctx, "https://storage.googleapis.com/evil-bucket/phish.html")
+    assert page.url.endswith("/innocent-bucket/menu.pdf")
+    assert "Known phishing site" in text
+    page.close()
+
+
+def test_high_warnings_also_raise_a_system_notification(browser):
+    ctx, worker = browser
+    page, _ = visit(ctx, "https://secure-barclays.co.uk/")
+    titles = worker.evaluate("""async () => {
+        const all = await chrome.notifications.getAll();
+        return Object.keys(all);
+    }""")
+    tab_id = _tab_id(worker, "https://secure-barclays.co.uk/")
+    assert f"tab-{tab_id}" in titles
     page.close()
 
 
@@ -290,6 +383,22 @@ def test_a_page_cannot_fake_a_login(browser):
     assert "sneaky-shop.com" not in mine
 
 
+def test_a_password_manager_login_still_counts(browser):
+    # Password managers fill fields with script (untrusted events), but the
+    # person still clicks "Sign in".
+    ctx, worker = browser
+    yesterday = (date.today() - timedelta(days=1)).isoformat()
+    worker.evaluate(f"""() => chrome.storage.local.set({{
+        loginSeen: {{ "my-credit-union.org": ["{yesterday}"] }} }})""")
+    page, _ = visit(ctx, "https://my-credit-union.org/login", wait=1)
+    page.evaluate("document.querySelector('input[type=password]').value = 'filled-by-manager'")
+    page.click("button")
+    page.wait_for_timeout(1000)
+    page.close()
+    mine = worker.evaluate("async () => (await chrome.storage.local.get('mySites')).mySites")
+    assert "my-credit-union.org" in mine
+
+
 def _stored_keys(worker):
     return worker.evaluate("""() => new Promise((resolve) => {
         const req = indexedDB.open("lookalike-watch", 1);
@@ -338,6 +447,20 @@ def test_feed_download_switches_to_the_new_list(browser):
     FEED_FIXTURES["phishing-domains-ACTIVE"] = "<html>rate limited</html>"
     refresh()
     page, text = visit(ctx, "https://second-list.example/")
+    assert "Known phishing site" in text
+    page.close()
+
+    # Two refreshes at once (a double click, or the alarm firing at startup)
+    # must not delete each other's list
+    FEED_FIXTURES["phishing-domains-ACTIVE"] = f"third-list.example\n{filler}"
+    options = ctx.new_page()
+    options.goto(f"chrome-extension://{ext_id}/options.html")
+    options.evaluate("""Promise.all([
+        chrome.runtime.sendMessage({ type: "refreshFeeds" }),
+        chrome.runtime.sendMessage({ type: "refreshFeeds" }),
+    ])""")
+    options.close()
+    page, text = visit(ctx, "https://third-list.example/")
     assert "Known phishing site" in text
     page.close()
     FEED_FIXTURES.clear()

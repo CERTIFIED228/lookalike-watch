@@ -32,7 +32,17 @@ const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
 const saved = tab ? (await chrome.storage.session.get(`tab:${tab.id}`))[`tab:${tab.id}`] : null;
 box.replaceChildren();
 
-if (!saved || saved.url !== tab.url) {
+// Compare sites, not full addresses: single-page apps change the path
+// without reloading, and the verdict is about the site.
+const sameSite = (a, b) => {
+  try {
+    return new URL(a).host === new URL(b).host;
+  } catch {
+    return false;
+  }
+};
+
+if (!saved || !tab?.url || !sameSite(saved.url, tab.url)) {
   box.append(line("p", "This page hasn't been checked (only websites are).", "muted"));
 } else if (!saved.verdict.severity) {
   box.append(line("p", "No warning signs on this site.", "good"));
@@ -43,6 +53,12 @@ if (!saved || saved.url !== tab.url) {
   box.append(ul);
 } else {
   describe(box, saved.verdict);
+  const trust = line("button", "I trust this site");
+  trust.addEventListener("click", async () => {
+    const reply = await chrome.runtime.sendMessage({ type: "trustTab", tabId: tab.id });
+    box.replaceChildren(line("p", reply.error ?? "Trusted. You won't get warnings on this site.", reply.error ? "bad" : "good"));
+  });
+  box.append(trust);
 }
 
 const status = await chrome.runtime.sendMessage({ type: "status" });

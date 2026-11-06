@@ -19,8 +19,10 @@
 
   let shown = false;
   let dismissed = false;
+  let removeCard = () => {};
   let reportedLogin = false;
   let typedPassword = false;
+  let touchedForm = null;
 
   const hasLogin = () => document.querySelector(LOGIN_FIELDS) !== null;
 
@@ -36,6 +38,10 @@
     });
   }
 
+  // The first check is sent before any of the page's own scripts run, so a
+  // page can't change its address with history.replaceState() first.
+  const firstCheck = ask({ type: "check", hasLogin: false });
+
   async function check() {
     const verdict = await ask({ type: "check", hasLogin: hasLogin() });
     if (verdict?.show && !shown) {
@@ -50,8 +56,7 @@
     :host { all: initial; }
     .card {
       --bg: #ffffff; --fg: #1f2328; --muted: #57606a; --line: #d0d7de; --btn: #1f2328; --btn-fg: #ffffff;
-      position: fixed; top: 16px; right: 16px; z-index: 2147483647;
-      width: min(360px, calc(100vw - 32px)); box-sizing: border-box;
+      position: relative; width: 100%; box-sizing: border-box;
       background: var(--bg); color: var(--fg);
       border: 1px solid var(--line); border-left: 5px solid var(--sev);
       border-radius: 10px; box-shadow: 0 8px 28px rgba(0,0,0,.18);
@@ -84,8 +89,8 @@
       all: unset; cursor: pointer; background: var(--btn); color: var(--btn-fg);
       font-weight: 600; padding: 7px 12px; border-radius: 6px;
     }
-    .trust { all: unset; cursor: pointer; color: var(--muted); text-decoration: underline; font-size: 12px; }
-    .leave:focus-visible, .trust:focus-visible { outline: 2px solid var(--sev); outline-offset: 2px; }
+    .hint { color: var(--muted); font-size: 12px; margin: 10px 0 0; }
+    .leave:focus-visible { outline: 2px solid var(--sev); outline-offset: 2px; }
   `;
 
   const COLOURS = { critical: "#b3261e", high: "#c2410c", medium: "#a16207", low: "#475569" };
@@ -97,25 +102,54 @@
     return node;
   }
 
-  // Only real clicks count: a phishing page could otherwise call .click()
-  // on "I trust this site" itself.
+  // Only real clicks count: a page can't press the buttons with .click().
   function onRealClick(node, handler) {
     node.addEventListener("click", (event) => {
       if (event.isTrusted) handler(event);
     });
   }
 
-  // A page can't reach into a closed shadow root to read or change the card,
-  // and if it removes the card we put it back.
+  // The card sits inside the scam page, so the page will try to hide it.
+  // It's a plain <div> (a page can pre-define a custom element's name and get
+  // inside it), in a closed shadow root, shown in the browser's top layer so
+  // z-index tricks can't cover it, and styled inline with !important, which
+  // beats any stylesheet. If the page changes or removes it, it goes back.
+  const HOST_STYLE = [
+    "all: initial", "position: fixed", "inset: 16px 16px auto auto", "margin: 0", "padding: 0",
+    "border: 0", "background: transparent", "width: min(360px, calc(100vw - 32px))",
+    "height: auto", "max-height: calc(100vh - 32px)", "overflow: visible", "display: block",
+    "visibility: visible", "opacity: 1", "z-index: 2147483647", "transform: none", "filter: none",
+    "clip-path: none", "pointer-events: auto",
+  ].map((rule) => `${rule} !important`).join("; ");
+
+  function pin(host) {
+    host.setAttribute("style", HOST_STYLE);
+    host.setAttribute("popover", "manual");
+    if (!host.isConnected) document.documentElement.append(host);
+    try {
+      if (!host.matches(":popover-open")) host.showPopover();
+    } catch {
+      // older browser: the fixed position and z-index still apply
+    }
+  }
+
   function keepOnPage(host) {
     let restores = 0;
-    new MutationObserver(() => {
-      if (!dismissed && !host.isConnected && restores++ < 20) document.documentElement.append(host);
-    }).observe(document.documentElement, { childList: true, subtree: true });
+    const intact = () => host.isConnected && host.getAttribute("style") === HOST_STYLE
+      && host.getAttribute("popover") === "manual" && host.matches(":popover-open");
+    // Only repair real damage, or our own repairs would trigger more repairs.
+    const restore = () => {
+      if (!dismissed && !intact() && restores++ < 50) pin(host);
+    };
+    new MutationObserver(restore).observe(document.documentElement, { childList: true, subtree: true });
+    new MutationObserver(restore).observe(host, { attributes: true });
+    host.addEventListener("toggle", (event) => {
+      if (event.newState === "closed") restore();
+    });
   }
 
   function render(verdict) {
-    const host = el("lookalike-watch-alert");
+    const host = el("div", { "data-lookalike-watch": "" });
     const root = host.attachShadow({ mode: "closed" });
     const style = el("style");
     style.textContent = STYLE;
@@ -129,10 +163,11 @@
       el("span", { class: "who" }, "lookalike-watch"),
     );
     const close = el("button", { class: "close", "aria-label": "Dismiss" }, "×");
-    onRealClick(close, () => {
+    removeCard = () => {
       dismissed = true;
       host.remove();
-    });
+    };
+    onRealClick(close, () => removeCard());
     top.append(close);
 
     const reasons = el("ul");
@@ -148,13 +183,7 @@
       if (verdict.realDomain) location.href = `https://${verdict.realDomain}`;
       else ask({ type: "leave" });
     });
-    const trust = el("button", { class: "trust" }, "I trust this site");
-    onRealClick(trust, async () => {
-      dismissed = true;
-      await ask({ type: "trust" });
-      host.remove();
-    });
-    actions.append(leave, trust);
+    actions.append(leave);
 
     card.append(
       top,
@@ -167,18 +196,24 @@
       real.append(el("b", {}, verdict.realDomain));
       card.append(real);
     }
-    card.append(actions);
+    // "I trust this site" lives in the toolbar popup, where a page can't
+    // trick you into clicking it.
+    card.append(actions, el("p", { class: "hint" }, "Think this is wrong? Click the lookalike-watch icon in your toolbar."));
     root.append(style, card);
-    document.documentElement.append(host);
+    pin(host);
     keepOnPage(host);
   }
+
+  chrome.runtime.onMessage.addListener((msg) => {
+    if (msg?.type === "trusted") removeCard();
+  });
 
   // --- login forms --------------------------------------------------------------------
 
   // Many sites add their login form after the page loads. Re-check once a
   // form shows up, because some warnings only apply to login pages.
   function watchForLogin() {
-    if (hasLogin()) return;
+    if (hasLogin() || !document.documentElement) return;
     const observer = new MutationObserver(() => {
       if (hasLogin()) {
         observer.disconnect();
@@ -189,23 +224,42 @@
     setTimeout(() => observer.disconnect(), 15_000);
   }
 
-  // A site only counts as one you log into if you actually typed (or
-  // autofilled) a password, so a page can't fake a login with requestSubmit().
+  // A site only counts as one you log into if a real person was involved:
+  // they typed the password, or (for password managers, whose filling looks
+  // scripted) clicked or pressed a key in the form. A page can't fake that
+  // with requestSubmit().
   document.addEventListener("input", (event) => {
     if (event.isTrusted && event.target instanceof HTMLInputElement && event.target.type === "password") {
       typedPassword = true;
     }
   }, true);
+  for (const type of ["pointerdown", "keydown"]) {
+    document.addEventListener(type, (event) => {
+      if (event.isTrusted) touchedForm = event.target?.closest?.("form") ?? touchedForm;
+    }, true);
+  }
 
   document.addEventListener("submit", (event) => {
     const form = event.target;
-    if (reportedLogin || !typedPassword || !(form instanceof HTMLFormElement)) return;
-    if (form.querySelector("input[type=password]")) {
-      reportedLogin = true;
-      ask({ type: "loggedIn" });
-    }
+    if (reportedLogin || !(form instanceof HTMLFormElement)) return;
+    const password = form.querySelector("input[type=password]");
+    if (!password?.value || !(typedPassword || touchedForm === form)) return;
+    reportedLogin = true;
+    ask({ type: "loggedIn" });
   }, true);
 
-  check();
-  watchForLogin();
+  function whenReady(fn) {
+    if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", fn, { once: true });
+    else fn();
+  }
+
+  whenReady(async () => {
+    const verdict = await firstCheck;
+    if (verdict?.show && !shown) {
+      shown = true;
+      render(verdict);
+    }
+    check();
+    watchForLogin();
+  });
 })();

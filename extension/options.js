@@ -82,9 +82,11 @@ async function render() {
 }
 
 $("refresh").addEventListener("click", async () => {
+  $("refresh").disabled = true;
   $("refresh-msg").textContent = "Downloading...";
   await chrome.runtime.sendMessage({ type: "refreshFeeds" });
   $("refresh-msg").textContent = "";
+  $("refresh").disabled = false;
   render();
 });
 

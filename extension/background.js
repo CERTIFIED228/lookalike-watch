@@ -97,7 +97,35 @@ async function showOnToolbar(tabId, url, verdict) {
   await chrome.storage.session.set({ [`tab:${tabId}`]: { url, verdict } });
 }
 
-chrome.tabs.onRemoved.addListener((tabId) => chrome.storage.session.remove(`tab:${tabId}`));
+// High and critical warnings also go to a system notification. The card
+// inside the page can in the end be covered up by a determined page; this
+// and the toolbar badge can't be touched by it.
+async function notify(tabId, url, verdict) {
+  if (!verdict.show || !["high", "critical"].includes(verdict.severity)) return;
+  const host = new URL(url).hostname;
+  const key = `notified:${tabId}`;
+  const { [key]: already } = await chrome.storage.session.get(key);
+  if (already === host) return; // once per site per tab
+  await chrome.storage.session.set({ [key]: host });
+  chrome.notifications.create(`tab-${tabId}`, {
+    type: "basic",
+    iconUrl: chrome.runtime.getURL("icons/128.png"),
+    title: `${verdict.severity.toUpperCase()}: ${verdict.title}`,
+    message: verdict.reasons.slice(0, 2).join("\n"),
+    contextMessage: host,
+    priority: 2,
+  });
+}
+
+chrome.notifications.onClicked.addListener((id) => {
+  const tabId = Number(id.replace("tab-", ""));
+  if (Number.isInteger(tabId)) chrome.tabs.update(tabId, { active: true }).catch(() => {});
+  chrome.notifications.clear(id);
+});
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+  chrome.storage.session.remove([`tab:${tabId}`, `notified:${tabId}`]);
+});
 
 // --- learning the sites you log into ---------------------------------------------------
 
@@ -173,7 +201,18 @@ async function refreshFeed(feed, ctx) {
   }
 }
 
-async function refreshFeeds({ onlyStale = false } = {}) {
+// One refresh at a time: two overlapping ones would each delete the
+// generation the other was writing.
+let refreshing = null;
+
+function refreshFeeds(options = {}) {
+  refreshing ??= runRefresh(options).finally(() => {
+    refreshing = null;
+  });
+  return refreshing;
+}
+
+async function runRefresh({ onlyStale = false } = {}) {
   const ctx = await getIndex();
   const { feedStatus } = await chrome.storage.local.get({ feedStatus: {} });
   const due = Date.now() - REFRESH_MINUTES * 60_000;
@@ -238,12 +277,9 @@ async function fromPage(msg, sender) {
     case "check": {
       const verdict = await check(url, msg.hasLogin === true);
       await showOnToolbar(tabId, url, verdict);
+      await notify(tabId, url, verdict);
       return verdict;
     }
-    case "trust":
-      await addTrusted(url);
-      await chrome.action.setBadgeText({ tabId, text: "" });
-      return { ok: true };
     case "loggedIn":
       await learnLogin(url);
       return { ok: true };
@@ -255,11 +291,26 @@ async function fromPage(msg, sender) {
   }
 }
 
-// The settings page and popup are the only places allowed to read or change settings.
+async function trustTab(tabId) {
+  const key = `tab:${tabId}`;
+  const { [key]: saved } = await chrome.storage.session.get(key);
+  if (!saved) return { error: "This tab hasn't been checked." };
+  await addTrusted(saved.url);
+  await chrome.action.setBadgeText({ tabId, text: "" });
+  await chrome.storage.session.set({ [key]: { ...saved, verdict: { ...saved.verdict, severity: null, show: false } } });
+  chrome.tabs.sendMessage(tabId, { type: "trusted" }).catch(() => {});
+  return { ok: true };
+}
+
+// The settings page and popup are the only places allowed to read or change
+// settings, including "I trust this site": a web page can't fake a click in
+// the toolbar popup or cover it up.
 async function fromExtension(msg) {
   switch (msg.type) {
     case "status":
       return status();
+    case "trustTab":
+      return trustTab(msg.tabId);
     case "refreshFeeds":
       return refreshFeeds();
     case "addBrand":
