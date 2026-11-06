@@ -11,6 +11,7 @@ Most phishing starts with a domain that looks right at a glance. Brands usually 
 3. **Searches Certificate Transparency logs** (via [crt.sh](https://crt.sh)) for any certificate with the brand name in it. This catches things like `paypal-account-review.com` that no typo generator would ever come up with.
 4. **Scores each registered domain 0-100** and lists the reasons behind the score.
 5. **Watch mode** re-scans on a schedule and posts *new* findings to Slack or Discord.
+6. **A browser extension** warns you while browsing when a site is a lookalike or a known phishing site (see [Browser extension](#browser-extension)).
 
 It never visits the suspicious sites. Everything comes from DNS and public certificate logs.
 
@@ -92,6 +93,67 @@ To run it on a schedule instead of leaving it open, use `--once` with cron:
 ```
 
 or with Windows Task Scheduler, using the program `.venv\Scripts\lookalike-watch.exe` and the arguments `watch paypal.com --ct --once`.
+
+## Browser extension
+
+The `extension/` folder is a Chrome/Edge extension that does the protecting side: while you browse, it shows a small notification when a site looks like a fake copy of a real one, or is a known phishing site. The notification gives a severity and the reasons.
+
+### Install
+
+1. Open `chrome://extensions` (or `edge://extensions`) and turn on **Developer mode**.
+2. Click **Load unpacked** and pick the `extension` folder.
+
+Then browse as normal. Nothing shows up unless a site looks wrong.
+
+### What it checks
+
+Every page is checked in the browser itself. The sites you visit are never sent anywhere.
+
+1. **Lookalikes of sites worth protecting**: 43 often-phished brands (Microsoft, PayPal, Amazon, UK banks, Royal Mail, Evri, HMRC, DVLA, NHS...), the 10,000 most visited sites in Chrome, and any site you've logged into on two different days. It catches:
+   - homoglyphs (`pаypal.com` with a Cyrillic а, `paypa1.com`)
+   - one-letter typos (`paypl.com`)
+   - brand + scam word (`paypal-login.com`, `hmrc-tax-refund.com`, `royalmail-redelivery.com`)
+   - a real domain used as a fake subdomain (`paypal.com.secure-check.bid`)
+   - brand names on free hosting (`royalmail-redelivery.vercel.app`)
+2. **Known phishing sites**: [Phishing.Database](https://github.com/mitchellkrogza/Phishing.Database) (about 390,000 active domains) and the [OpenPhish](https://github.com/openphish/public_feed) public feed. Both are downloaded every 6 hours, stored in IndexedDB and looked up locally. Shared platforms like Google Docs are only ever matched on the exact page, never the whole service.
+3. **Warning signs on login pages**: a raw IP address, a password form over `http://`, mixed alphabets in one name, endings heavily used for phishing (`.zip`, `.top`, `.xin`...).
+
+Plus anything from a `lookalike-watch scan` report you import on the settings page.
+
+| Severity | When | Shown |
+|---|---|---|
+| Critical | on a phishing list, or looks identical to a protected brand or one of your sites | always |
+| High | typo of a brand, brand + scam word, fake subdomain | always |
+| Medium | weaker signs, e.g. a popular site's name on free hosting | only on pages asking for a password or card |
+| Low | warning signs only | only on login pages |
+
+The notification has a **Go to the real site** / **Leave this site** button and an **I trust this site** link for false alarms.
+
+### How accurate it is
+
+Measured with `extension/scripts/benchmark.mjs` on sites it has never seen: 100,000 sites from the Chrome UX Report ranked below the top 100k, and 50,000 domains from Phishing.Database (feed lookups switched off, so only the pattern checks count).
+
+| | Warned |
+|---|---|
+| Legitimate sites, normal pages | 5 in 100,000 (0.005%) |
+| Legitimate sites, login pages | 97 in 100,000 (0.1%), mostly medium/low |
+| Real phishing domains, pattern checks alone | 11% |
+
+The 11% is expected: most phishing domains have random names (`xk2-secure.top`) that look like nothing, and that's what the feeds are for. An earlier version also matched one-letter typos against all 10,000 top sites, but the benchmark showed it raised about 7 false alarms for every phishing site it caught, so that check now only applies to the protected brands and your own sites.
+
+Checking a page takes about 0.04 ms.
+
+### What it can't do
+
+- A brand-new scam with an innocent-looking name and no warning signs gets through until a feed lists it. Chrome's own Safe Browsing is still worth keeping on.
+- It only looks at the address, not the page content.
+- Hacked legitimate sites are only caught once they're on a feed.
+
+### Data
+
+- `data/top-sites.json` and `data/known-sites.json`: [Chrome UX Report](https://developer.chrome.com/docs/crux) top sites via [zakird/crux-top-lists](https://github.com/zakird/crux-top-lists) (CC BY 4.0).
+- `data/suffixes.json`: multi-part endings (`co.uk`, `com.au`) from the [Public Suffix List](https://publicsuffix.org/).
+- Rebuild them with `python extension/scripts/build_data.py`.
 
 ## Techniques
 
@@ -180,9 +242,13 @@ After the fixes, the same data gives 2 critical and 12 high instead of 43 and 78
 pip install -e ".[dev]"
 pytest
 ruff check .
+
+cd extension && npm test     # extension unit tests (Node 20+, no dependencies)
 ```
 
 The tests don't need internet access. DNS and crt.sh are faked, and one test file spins up a small DNS server on localhost to check the real dnspython parsing.
+
+`tests/test_extension_e2e.py` loads the extension into a real Chromium and visits fake sites. It's skipped unless Playwright is installed (`pip install playwright && playwright install chromium`).
 
 ## Responsible use
 
