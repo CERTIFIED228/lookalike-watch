@@ -115,8 +115,8 @@ Every page is checked in the browser itself. The sites you visit are never sent 
    - brand + scam word (`paypal-login.com`, `hmrc-tax-refund.com`, `royalmail-redelivery.com`)
    - a real domain used as a fake subdomain (`paypal.com.secure-check.bid`)
    - a brand in the subdomain of an unrelated site (`paypal-login.secure-host.net`)
-   - brand names on services where anyone can get a subdomain (`royalmail-redelivery.vercel.app`, `paypal-verify.wordpress.com`, `hmrc-refund.co.com`). The list of those services is the private part of the [Public Suffix List](https://publicsuffix.org/), about 2,900 of them.
-2. **Known phishing sites**: [Phishing.Database](https://github.com/mitchellkrogza/Phishing.Database) (about 390,000 active domains) and the [OpenPhish](https://github.com/openphish/public_feed) public feed. Both are downloaded every 6 hours, stored in IndexedDB and looked up locally. Popular sites and shared hosts (Google Docs, bare S3 endpoints, Instagram's link redirector...) are only matched on the listed page and anything under it, never as a whole service.
+   - brand names on services where anyone can get a subdomain (`royalmail-redelivery.vercel.app`, `paypal-verify.wordpress.com`, `hmrc-refund.co.com`). The list of those services is the private part of the [Public Suffix List](https://publicsuffix.org/), about 2,900 of them, plus about 30 that phishers use a lot but aren't on it (wordpress.com, sharepoint.com, wpengine, weebly...).
+2. **Known phishing sites**: [Phishing.Database](https://github.com/mitchellkrogza/Phishing.Database) (about 390,000 active domains) and the [OpenPhish](https://github.com/openphish/public_feed) public feed. Both are downloaded every 6 hours, stored in IndexedDB and looked up locally. Popular sites and shared hosts (Google Docs, bare S3 endpoints, Instagram's link redirector...) are only matched on the listed page and anything under it, never as a whole service. The exception is a single subdomain of a popular site (someone's shop hosted on a big platform), which can be listed as a whole, unless that subdomain is popular itself (`support.roku.com`) or belongs to one of the protected brands.
 3. **Warning signs on login pages**: a raw IP address, a password form over `http://`, Latin mixed with Cyrillic or Greek in one name, endings heavily used for phishing (`.zip`, `.top`, `.xin`...). It takes at least two of these to show anything.
 
 Plus anything from a `lookalike-watch scan` report you import on the settings page.
@@ -125,10 +125,12 @@ Plus anything from a `lookalike-watch scan` report you import on the settings pa
 |---|---|---|
 | Critical | on a phishing list, or looks identical to a protected brand or one of your sites | always |
 | High | typo of a brand with 6+ letters, brand + scam word, real domain as a fake subdomain | always |
-| Medium | weaker signs: typos of 5-letter brands, the brand on another ending, the brand on a shared service or in a subdomain | only on pages asking for a password or card |
+| Medium | weaker signs: typos of 5-letter brands, the brand on another ending, the brand on a shared service or in a subdomain, a short brand run into another word (`dhlsupport.com`) | only on pages asking for a password or card |
 | Low | warning signs only | only on login pages |
 
-The notification has a **Go to the real site** / **Leave this site** button and an **I trust this site** link for false alarms.
+The notification has a **Go to the real site** / **Leave this site** button and a × to close it. High and critical warnings also show a system notification and a badge on the toolbar icon.
+
+For a false alarm, click the toolbar icon and choose **I trust this site**. That button is deliberately not in the page itself (see below).
 
 ### Check a link without opening it
 
@@ -138,12 +140,15 @@ Click the toolbar icon and paste a link (from a text message, say) into **Check 
 
 A phishing page runs its own scripts right next to the notification, so the extension doesn't trust the page:
 
-- The notification sits in a closed shadow root, which page scripts can't read or change. If a page removes it, it's put back.
-- Its buttons ignore clicks that didn't come from a real mouse or keyboard (`event.isTrusted`), so a page can't press "I trust this site" on itself.
+- The notification is a plain `div` with a closed shadow root, so page scripts can't read or change what's inside. It's shown in the browser's top layer (as a popover) with inline `!important` styles, so page CSS can't push it under something or hide it, and if a script removes or restyles it, it's put back.
+- "I trust this site" lives only in the toolbar popup. A button inside the page could in theory be clicked by the page itself or covered with a fake one; the popup is out of the page's reach.
+- High and critical warnings also go to a system notification and the toolbar badge. A determined page can still draw something over the in-page card, but it can't touch those two.
+- The first check runs as the page starts loading, before the page's own scripts, so redirecting or rewriting the address straight away doesn't dodge it.
+- Its buttons ignore clicks that didn't come from a real mouse or keyboard (`event.isTrusted`).
 - The background worker takes the page address from Chrome (`sender.url`), never from the message.
-- "I trust this site" only ever trusts the flagged site: one tenant of a shared service, or just the page on something like Google Sites.
+- Trusting a site only ever trusts the flagged site: one tenant of a shared service, or just the page on something like Google Sites.
 - A site only becomes "your site" after you've really typed a password there (a trusted input event) on two different days.
-- Settings can only be read or changed from the extension's own pages.
+- Settings can only be read or changed from the extension's own pages, and feed downloads run one at a time so two can't corrupt each other.
 
 ### How accurate it is
 
@@ -152,12 +157,14 @@ Measured with `extension/scripts/benchmark.mjs` on sites it has never seen: 100,
 | | Warned |
 |---|---|
 | Legitimate sites, normal pages | 8 in 100,000 (0.008%) |
-| Legitimate sites, treating every page as a login page | 114 in 100,000 (0.11%), mostly medium |
+| Legitimate sites, treating every page as a login page | 115 in 100,000 (0.12%), mostly medium |
 | Real phishing domains, pattern checks alone (feeds off) | 15.6% |
 | The 100,000 most popular sites against the phishing feed | 0 |
-| The 100,000 lesser-known sites against the phishing feed | 32, mostly small business and university sites the feed says have been hacked |
+| The 100,000 lesser-known sites against the phishing feed | 29 |
 
 The 15.6% is expected: most phishing domains have random names (`xk2-secure.top`) that look like nothing, and that's what the feeds are for. An earlier version also matched one-letter typos against all 10,000 top sites, but the benchmark showed it raised about 7 false alarms for every phishing site it caught, so that check now only applies to the protected brands and your own sites.
+
+The 29 are what the feed says, not something the extension decides. Most are small business and university sites the feed says have been hacked, but a few are real services (a bank's and an ID provider's sites among them), so some listings are probably wrong or out of date. There's no way to double-check a feed from inside the browser, so I left them as they are rather than hand-editing the list.
 
 Checking a page takes about 0.04 ms.
 
@@ -165,13 +172,16 @@ Checking a page takes about 0.04 ms.
 
 - A brand-new scam with an innocent-looking name and no warning signs gets through until a feed lists it. Chrome's own Safe Browsing is still worth keeping on.
 - It only looks at the address, not the page content.
-- Hacked legitimate sites are only caught once they're on a feed, and a feed listing can't be double-checked: some of the 32 hits above may be out of date.
+- Hacked legitimate sites are only caught once they're on a feed, and a feed listing can't be double-checked: some of the 29 hits above may be out of date.
+- A page can still cover the in-page card with its own content. The badge and system notification are there for that case.
+- Medium and low warnings need a login form. A password field inside an iframe or a closed shadow root, or one that appears more than 15 seconds after the page loads, isn't seen.
 - Wildcard exceptions in the Public Suffix List (about two rules) aren't handled.
 
 ### Data
 
 - `data/top-sites.json` and `data/known-sites.json`: [Chrome UX Report](https://developer.chrome.com/docs/crux) top sites via [zakird/crux-top-lists](https://github.com/zakird/crux-top-lists) (CC BY 4.0).
-- `data/suffixes.json`: multi-part endings (`co.uk`, `com.au`) from the [Public Suffix List](https://publicsuffix.org/).
+- `data/popular-hosts.json`: subdomains among those top sites (`support.roku.com`), so a feed listing for one isn't matched as a hacked subdomain.
+- `data/suffixes.json` and `data/platforms.json`: the ICANN and private parts of the [Public Suffix List](https://publicsuffix.org/), multi-part endings (`co.uk`) and shared services (`github.io`).
 - Rebuild them with `python extension/scripts/build_data.py`.
 
 ## Techniques
@@ -207,7 +217,7 @@ Points are added up and capped at 100:
 | Has a certificate in CT logs | +10 |
 | Registered | +5 |
 | Parked (nameservers belong to a parking company) | -10 |
-| Probably owned by the brand: nameservers at a brand-protection registrar like MarkMonitor or CSC, on the brand's own domain, or shared with the brand (big shared DNS providers like Cloudflare don't count) | -40 |
+| Probably owned by the brand: all nameservers at a brand-protection registrar like MarkMonitor or CSC, all on the brand's own domain, or all among the brand's own nameservers (big shared DNS providers like Cloudflare don't count on their own) | -40 |
 
 For parked and brand-owned domains, the web, mail and certificate points aren't added. Those servers belong to the parking company or the brand, so they don't make the domain more dangerous.
 
@@ -250,7 +260,7 @@ After the fixes, the same data gives 2 critical and 12 high instead of 43 and 78
 ## Limitations
 
 - Registered does not mean malicious. Plenty of lookalikes are owned by the brand, parked, or just someone's unrelated project. The score is there to help you prioritise, not to give a verdict.
-- Ownership detection is heuristic and only uses nameservers. Mail records are ignored on purpose: anyone can point MX at the brand's mail servers, but pointing NS at nameservers you don't control just breaks your own domain. A brand's country sites (like `paypal.cn`) can use completely different DNS and still be legitimate. Add those with `--allow`.
+- Ownership detection is heuristic and only uses nameservers. Mail records are ignored on purpose: anyone can point MX at the brand's mail servers, but pointing NS at nameservers you don't control just breaks your own domain. That only holds if *every* nameserver is the brand's: a mixed set still resolves through the attacker's one, so a single borrowed nameserver proves nothing. A brand's country sites (like `paypal.cn`) can use completely different DNS and still be legitimate. Add those with `--allow`.
 - crt.sh is free and often slow. Big brands can time out, so the tool retries with backoff.
 - The homoglyph list covers the common cases, not all of Unicode's confusables.
 - There's no WHOIS/RDAP lookup yet, so domain age isn't part of the score. Newly registered domains are a strong signal, and that's the next thing I'd add.
