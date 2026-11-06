@@ -161,9 +161,11 @@ def cmd_scan(args) -> int:
     findings = [f for f in result.findings if f.score >= args.min_score]
 
     if args.output:
-        ext = Path(args.output).suffix.lower().lstrip(".")
-        fmt = ext if ext in {"json", "csv"} else "table"
-        Path(args.output).write_text(_render(findings, fmt, brand.fqdn) + "\n", encoding="utf-8")
+        out = Path(args.output)
+        fmt = out.suffix.lower().lstrip(".")
+        fmt = fmt if fmt in {"json", "csv"} else "table"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(_render(findings, fmt, brand.fqdn) + "\n", encoding="utf-8")
         log(f"report written to {args.output}")
     else:
         print(_render(findings, args.format, brand.fqdn))

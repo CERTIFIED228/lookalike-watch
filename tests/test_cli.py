@@ -64,6 +64,12 @@ def test_scan_writes_to_file(tmp_path, capsys, fake_net):
     assert json.loads(out_file.read_text(encoding="utf-8"))["target"] == "paypal.com"
 
 
+def test_output_folder_is_created_if_missing(tmp_path, capsys, fake_net):
+    out_file = tmp_path / "reports" / "paypal.csv"
+    assert cli.main(["scan", "paypal.com", "-t", "omission", "-o", str(out_file)]) == 0
+    assert out_file.read_text(encoding="utf-8").startswith("score,level,domain")
+
+
 def test_min_score_filters(capsys, fake_net):
     cli.main(["scan", "paypal.com", "-t", "omission", "--format", "json", "--min-score", "99"])
     assert json.loads(capsys.readouterr().out)["findings"] == []
