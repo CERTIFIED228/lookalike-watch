@@ -105,6 +105,8 @@ The `extension/` folder is a Chrome/Edge extension that does the protecting side
 
 Then browse as normal. Nothing shows up unless a site looks wrong.
 
+Chrome lists the extension as able to "read and change all your data on all websites". That's because it has to run on every page to check it. It only looks at the address and whether the page has a login form, and nothing is ever sent anywhere: the only network requests are the two public list downloads from GitHub.
+
 ### What it checks
 
 Every page is checked in the browser itself. The sites you visit are never sent anywhere.
