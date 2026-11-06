@@ -34,6 +34,8 @@
     <p class="muted">Sites you've logged into on two different days are protected like big brands. You can add one yourself too.</p>
     <form class="row" id="add-site"><input type="text" id="site" placeholder="mybank.co.uk" aria-label="Domain to protect"><button>Add</button></form>
     <ul class="items" id="my-sites"></ul>
+    <p></p>
+    <div class="row"><span id="login-history" class="muted"></span><button id="forget-logins">Forget login history</button></div>
   </section>
 
   <section class="card">
@@ -44,6 +46,7 @@
       <input type="text" id="brand-domains" placeholder="Real domains, e.g. reading.ac.uk" aria-label="Real domains, comma separated">
       <button>Add</button>
     </form>
+    <p id="brand-msg" role="status"></p>
     <ul class="items" id="brands"></ul>
   </section>
 

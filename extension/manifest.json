@@ -3,7 +3,7 @@
   "name": "lookalike-watch",
   "description": "Warns you when a website is a fake copy of a real one, or a known phishing site.",
   "version": "0.1.0",
-  "permissions": ["storage", "unlimitedStorage", "alarms"],
+  "permissions": ["storage", "unlimitedStorage", "alarms", "activeTab"],
   "host_permissions": ["https://raw.githubusercontent.com/*"],
   "background": { "service_worker": "background.js", "type": "module" },
   "content_scripts": [

@@ -18,7 +18,9 @@
   };
 
   let shown = false;
+  let dismissed = false;
   let reportedLogin = false;
+  let typedPassword = false;
 
   const hasLogin = () => document.querySelector(LOGIN_FIELDS) !== null;
 
@@ -35,7 +37,7 @@
   }
 
   async function check() {
-    const verdict = await ask({ type: "check", url: location.href, hasLogin: hasLogin() });
+    const verdict = await ask({ type: "check", hasLogin: hasLogin() });
     if (verdict?.show && !shown) {
       shown = true;
       render(verdict);
@@ -95,9 +97,26 @@
     return node;
   }
 
+  // Only real clicks count: a phishing page could otherwise call .click()
+  // on "I trust this site" itself.
+  function onRealClick(node, handler) {
+    node.addEventListener("click", (event) => {
+      if (event.isTrusted) handler(event);
+    });
+  }
+
+  // A page can't reach into a closed shadow root to read or change the card,
+  // and if it removes the card we put it back.
+  function keepOnPage(host) {
+    let restores = 0;
+    new MutationObserver(() => {
+      if (!dismissed && !host.isConnected && restores++ < 20) document.documentElement.append(host);
+    }).observe(document.documentElement, { childList: true, subtree: true });
+  }
+
   function render(verdict) {
     const host = el("lookalike-watch-alert");
-    const root = host.attachShadow({ mode: "open" });
+    const root = host.attachShadow({ mode: "closed" });
     const style = el("style");
     style.textContent = STYLE;
 
@@ -110,7 +129,10 @@
       el("span", { class: "who" }, "lookalike-watch"),
     );
     const close = el("button", { class: "close", "aria-label": "Dismiss" }, "×");
-    close.addEventListener("click", () => host.remove());
+    onRealClick(close, () => {
+      dismissed = true;
+      host.remove();
+    });
     top.append(close);
 
     const reasons = el("ul");
@@ -122,13 +144,14 @@
 
     const actions = el("div", { class: "actions" });
     const leave = el("button", { class: "leave" }, verdict.realDomain ? `Go to ${verdict.realDomain}` : "Leave this site");
-    leave.addEventListener("click", () => {
+    onRealClick(leave, () => {
       if (verdict.realDomain) location.href = `https://${verdict.realDomain}`;
       else ask({ type: "leave" });
     });
     const trust = el("button", { class: "trust" }, "I trust this site");
-    trust.addEventListener("click", async () => {
-      await ask({ type: "trust", url: location.href });
+    onRealClick(trust, async () => {
+      dismissed = true;
+      await ask({ type: "trust" });
       host.remove();
     });
     actions.append(leave, trust);
@@ -147,6 +170,7 @@
     card.append(actions);
     root.append(style, card);
     document.documentElement.append(host);
+    keepOnPage(host);
   }
 
   // --- login forms --------------------------------------------------------------------
@@ -165,12 +189,20 @@
     setTimeout(() => observer.disconnect(), 15_000);
   }
 
+  // A site only counts as one you log into if you actually typed (or
+  // autofilled) a password, so a page can't fake a login with requestSubmit().
+  document.addEventListener("input", (event) => {
+    if (event.isTrusted && event.target instanceof HTMLInputElement && event.target.type === "password") {
+      typedPassword = true;
+    }
+  }, true);
+
   document.addEventListener("submit", (event) => {
     const form = event.target;
-    if (reportedLogin || !(form instanceof HTMLFormElement)) return;
+    if (reportedLogin || !typedPassword || !(form instanceof HTMLFormElement)) return;
     if (form.querySelector("input[type=password]")) {
       reportedLogin = true;
-      ask({ type: "loggedIn", url: location.href });
+      ask({ type: "loggedIn" });
     }
   }, true);
 

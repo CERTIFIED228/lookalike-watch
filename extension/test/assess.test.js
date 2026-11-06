@@ -226,3 +226,77 @@ test("the same lookalike isn't explained twice", () => {
   const v = check("https://xn--pypal-4ve.com/");
   assert.ok(!said(v, "1 character different"), v.reasons.join(" | "));
 });
+
+// --- review fixes -----------------------------------------------------------------------
+
+test("1 standing in for i is caught", () => {
+  assert.equal(check("https://1cloud.com/").severity, "critical");
+});
+
+for (const url of [
+  "https://paypal-verify.wordpress.com/",
+  "https://hmrc-refund.co.com/",
+  "https://paypal-login.uk.com/",
+]) {
+  test(`brand + scam word on a multi-tenant service: ${url}`, () => {
+    assert.equal(check(url).severity, "high", JSON.stringify(check(url)));
+  });
+}
+
+test("brand mentioned in the subdomain of an unrelated site", () => {
+  assert.equal(check("https://paypal.com-secure.xyz/").severity, "high");
+  assert.equal(check("https://paypal-login.secure-host.net/").severity, "high");
+  assert.equal(check("https://www-paypal-com.evil.net/").severity, "medium");
+  const v = check("https://www.paypal.co.uk.evil.net/");
+  assert.ok(["medium", "high"].includes(v.severity), JSON.stringify(v));
+  assert.equal(v.brand, "PayPal");
+});
+
+test("fake subdomains name the right brand, once", () => {
+  const v = check("https://secure.hmrc.gov.uk.tax-refund.example/");
+  assert.equal(v.brand, "HMRC", JSON.stringify(v));
+  assert.equal(v.reasons.filter((r) => r.includes("to look real")).length, 1);
+});
+
+test("generic words that happen to be top sites aren't treated as brands", () => {
+  assert.equal(check("https://secure-account-update.com/").severity, null);
+  assert.equal(check("https://login.paypal.verify-account.net/").brand, "PayPal");
+});
+
+test("short scam words must stand alone", () => {
+  assert.equal(check("https://appletaxi.co.uk/").severity, null);
+  assert.equal(check("https://amazonfinest.com/").severity, null);
+  assert.equal(check("https://googletrackers.com/").severity, null);
+  assert.equal(check("https://paypalverifyaccount.com/").severity, "high");
+  assert.equal(check("https://hmrctaxrefund.com/").severity, "high");
+});
+
+test("more home network names stay quiet", () => {
+  for (const url of ["http://router.home.arpa/login", "http://nas.lan/login", "http://fritz.box/",
+    "http://speedport.ip/login", "http://printer.internal/login"]) {
+    assert.equal(onLoginPage(url).show, false, url);
+  }
+});
+
+test("accented latin names aren't 'mixed alphabets'", () => {
+  const v = onLoginPage("https://xn--vit-nam-zv4c.vn/");
+  assert.ok(!said(v, "different alphabets"), JSON.stringify(v));
+});
+
+test("top sites only match as a whole word or at the start or end", () => {
+  assert.equal(onLoginPage("https://allviralcollectionsofbd1.blogspot.com/").show, false);
+  assert.equal(onLoginPage("https://tommybookingsupport.com/").show, false);
+});
+
+test("common words that are also top sites aren't brands", () => {
+  assert.equal(onLoginPage("https://quizizz-static.s3.amazonaws.com/").show, false);
+  assert.equal(onLoginPage("https://mobileunlocks.com/").show, false);
+});
+
+test("government services on service.gov.uk are trusted", () => {
+  assert.equal(onLoginPage("https://www.appeal-immigration-asylum-decision.service.gov.uk/").show, false);
+});
+
+test("Chinese or Japanese mixed with Latin isn't flagged as mixed alphabets", () => {
+  assert.equal(onLoginPage("https://xn--tv-vc9j20f.com/").show, false);
+});

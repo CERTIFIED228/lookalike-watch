@@ -1,6 +1,8 @@
 // Public lists of confirmed phishing sites. They're downloaded and checked
 // locally - the sites you visit are never sent anywhere.
 
+import { classifyHost, normaliseHost, pathKeys } from "./detect.js";
+
 export const FEEDS = [
   {
     id: "phishing-database",
@@ -19,28 +21,25 @@ export const FEEDS = [
 const HOSTNAME = /^(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))+$/;
 
 /**
- * One hostname per line. Entries in `skip` are dropped: the feed lists
- * docs.google.com because scams get hosted there, and blocking the whole of
- * Google Docs would be worse than useless.
+ * One hostname per line. Only ordinary sites are kept: the real list also
+ * contains docs.google.com, bare S3 endpoints and l.instagram.com, because
+ * scams get hosted on or bounced through them, and flagging all of those
+ * would be worse than useless.
  */
-export function parseHostList(text, skip) {
-  const out = [];
+export function parseHostList(text, { index, suffixes }) {
+  const out = new Set();
   for (const line of text.split("\n")) {
-    const host = line.trim().toLowerCase();
-    if (!host || host.startsWith("#") || !HOSTNAME.test(host) || skip.has(host)) continue;
-    out.push(host);
+    const host = normaliseHost(line.trim());
+    if (!host || host.startsWith("#") || !HOSTNAME.test(host)) continue;
+    const { kind } = classifyHost(host, index, suffixes);
+    if (kind === "site" || kind === "ip") out.add(host);
   }
-  return out;
+  return [...out];
 }
 
-function urlKey(u) {
-  const path = u.pathname.replace(/\/+$/, "");
-  return path ? `url:${u.hostname}${path}` : null;
-}
-
-/** One URL per line. On shared hosts only that exact page (path) is listed. */
-export function parseUrlList(text, shared) {
-  const out = [];
+/** One URL per line. On shared or legitimate hosts only that page (and below) is listed. */
+export function parseUrlList(text, { index, suffixes }) {
+  const out = new Set();
   for (const line of text.split("\n")) {
     let u;
     try {
@@ -49,19 +48,19 @@ export function parseUrlList(text, shared) {
       continue;
     }
     if (u.protocol !== "http:" && u.protocol !== "https:") continue;
-    const host = u.hostname.toLowerCase();
-    if (shared.has(host)) {
-      const key = urlKey(u);
-      if (key) out.push(key);
-    } else if (HOSTNAME.test(host)) {
-      out.push(host);
+    const c = classifyHost(u.hostname, index, suffixes);
+    if (c.kind === "site" || c.kind === "ip") {
+      if (HOSTNAME.test(c.host) || c.kind === "ip") out.add(c.host);
+    } else {
+      const key = pathKeys(c.host, u.pathname).at(-1);
+      if (key) out.add(key);
     }
   }
-  return out;
+  return [...out];
 }
 
-/** Keys to look up for a page: its host and parent domains, or path prefixes on shared hosts. */
-export function lookupKeys(url, shared) {
+/** Keys to look up for a page: the host and its parents, or path prefixes on shared hosts. */
+export function lookupKeys(url, { index, suffixes }) {
   let u;
   try {
     u = new URL(url);
@@ -69,14 +68,18 @@ export function lookupKeys(url, shared) {
     return [];
   }
   if (u.protocol !== "http:" && u.protocol !== "https:") return [];
-  const host = u.hostname.toLowerCase();
+  const c = classifyHost(u.hostname, index, suffixes);
+  if (c.kind === "ip") return [c.host];
+  if (c.kind !== "site") return pathKeys(c.host, u.pathname);
 
-  if (shared.has(host)) {
-    const segments = u.pathname.split("/").filter(Boolean);
-    return segments.map((_, i) => `url:${host}/${segments.slice(0, i + 1).join("/")}`);
-  }
-  const labels = host.split(".");
+  // Down to the registered domain and no further: never up into a shared
+  // platform like s3.us-east-1.amazonaws.com.
+  const labels = c.host.split(".");
   const keys = [];
-  for (let i = 0; i <= labels.length - 2; i++) keys.push(labels.slice(i).join("."));
+  for (let i = 0; i < labels.length; i++) {
+    const key = labels.slice(i).join(".");
+    keys.push(key);
+    if (key === c.parts.registered) break;
+  }
   return keys;
 }

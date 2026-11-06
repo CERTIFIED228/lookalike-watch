@@ -3,8 +3,10 @@
   data/top-sites.json    registered domains of the 10,000 most visited sites,
                          from Google's Chrome UX Report (via zakird/crux-top-lists)
   data/known-sites.json  the rest of the top 100,000, only used to avoid false alarms
-  data/suffixes.json     multi-part public suffixes (co.uk, com.au...) from the
-                       Public Suffix List snapshot that ships with tldextract
+  data/suffixes.json     public suffixes like co.uk and com.au (the ICANN part of
+                         the Public Suffix List snapshot that ships with tldextract)
+  data/platforms.json    services anyone can get a subdomain on, like github.io,
+                         myshopify.com or S3 buckets (the private part of that list)
 
 Run from the extension folder:  python scripts/build_data.py
 """
@@ -47,15 +49,16 @@ def ranked_sites(raw_gz: bytes, limit: int) -> list[str]:
     return list(seen)
 
 
-def multi_part_suffixes() -> list[str]:
+def psl_section(name: str) -> list[str]:
+    """Rules from one section of the Public Suffix List snapshot, wildcards included."""
     snapshot = Path(tldextract.__file__).with_name(".tld_set_snapshot").read_text("utf-8")
-    icann = snapshot.split("===BEGIN ICANN DOMAINS===")[1].split("===END ICANN DOMAINS===")[0]
+    section = snapshot.split(f"===BEGIN {name} DOMAINS===")[1].split(f"===END {name} DOMAINS===")[0]
     out = set()
-    for line in icann.splitlines():
+    for line in section.splitlines():
         line = line.strip()
-        if not line or line.startswith(("//", "*", "!")) or "." not in line:
+        if not line or line.startswith(("//", "!")) or "." not in line:
             continue
-        out.add(line.encode("idna").decode("ascii") if not line.isascii() else line)
+        out.add(line if line.isascii() else line.encode("idna").decode("ascii"))
     return sorted(out)
 
 
@@ -67,9 +70,12 @@ def main() -> None:
     known = [d for d in ranked_sites(raw, KNOWN_N) if d not in top]
     (DATA / "top-sites.json").write_text(json.dumps(sites, indent=0) + "\n", "utf-8")
     (DATA / "known-sites.json").write_text(json.dumps(known, separators=(",", ":")) + "\n", "utf-8")
-    suffixes = multi_part_suffixes()
+    suffixes = psl_section("ICANN")
     (DATA / "suffixes.json").write_text(json.dumps(suffixes, indent=0) + "\n", "utf-8")
-    print(f"{len(sites)} top sites, {len(known)} known sites, {len(suffixes)} multi-part suffixes")
+    platforms = psl_section("PRIVATE")
+    (DATA / "platforms.json").write_text(json.dumps(platforms, indent=0) + "\n", "utf-8")
+    print(f"{len(sites)} top sites, {len(known)} known sites, "
+          f"{len(suffixes)} suffixes, {len(platforms)} shared platforms")
 
 
 if __name__ == "__main__":

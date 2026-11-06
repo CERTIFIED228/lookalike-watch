@@ -9,6 +9,7 @@ function cleanDomain(text) {
   return /^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(value) ? value : null;
 }
 
+// items: [{ text, value }]. Removing compares the stored value itself.
 function listInto(ul, items, onRemove, empty) {
   ul.replaceChildren();
   if (!items.length) {
@@ -18,13 +19,13 @@ function listInto(ul, items, onRemove, empty) {
     ul.append(li);
     return;
   }
-  for (const item of items) {
+  for (const { text, value } of items) {
     const li = document.createElement("li");
     const label = document.createElement("span");
-    label.textContent = item.label ?? item;
+    label.textContent = text;
     const remove = document.createElement("button");
     remove.textContent = "Remove";
-    remove.addEventListener("click", () => onRemove(item));
+    remove.addEventListener("click", () => onRemove(value));
     li.append(label, remove);
     ul.append(li);
   }
@@ -33,6 +34,14 @@ function listInto(ul, items, onRemove, empty) {
 async function removeFrom(key, value) {
   const current = (await store.get({ [key]: [] }))[key];
   await store.set({ [key]: current.filter((x) => JSON.stringify(x) !== JSON.stringify(value)) });
+  render();
+}
+
+// Forget the login days too, or the next login would add it straight back.
+async function removeMySite(domain) {
+  const { mySites, loginSeen } = await store.get({ mySites: [], loginSeen: {} });
+  delete loginSeen[domain];
+  await store.set({ mySites: mySites.filter((d) => d !== domain), loginSeen });
   render();
 }
 
@@ -60,11 +69,13 @@ async function render() {
     feeds.append(li);
   }
 
-  listInto($("my-sites"), s.mySites, (d) => removeFrom("mySites", d), "None yet.");
-  listInto($("trusted"), s.trusted, (d) => removeFrom("trusted", d), "None.");
-  listInto($("brands"), s.customBrands.map((b) => ({ ...b, label: `${b.label} (${b.domains.join(", ")})` })),
-    (b) => removeFrom("customBrands", { label: b.label.split(" (")[0], name: b.name, domains: b.domains }),
-    "None added.");
+  listInto($("my-sites"), s.mySites.map((d) => ({ text: d, value: d })), removeMySite, "None yet.");
+  listInto($("trusted"), s.trusted.map((t) => ({ text: t.replace(/^url:/, ""), value: t })),
+    (t) => removeFrom("trusted", t), "None.");
+  listInto($("brands"), s.customBrands.map((b) => ({ text: `${b.label}: ${b.domains.join(", ")}`, value: b })),
+    (b) => removeFrom("customBrands", b), "None added.");
+  const remembered = Object.keys(s.loginSeen).length;
+  $("login-history").textContent = `Login history: ${remembered} site${remembered === 1 ? "" : "s"} remembered (kept for 90 days).`;
   $("brand-count").textContent = DEFAULT_BRANDS.length;
   const imported = Object.keys(s.scanBlocklist).length;
   $("scan-count").textContent = imported ? `${imported} domains imported from scans so far.` : "Nothing imported yet.";
@@ -91,12 +102,21 @@ $("add-brand").addEventListener("submit", async (e) => {
   e.preventDefault();
   const label = $("brand-name").value.trim();
   const domains = $("brand-domains").value.split(",").map(cleanDomain).filter(Boolean);
-  if (!label || !domains.length) return;
-  const name = domains[0].split(".")[0];
-  const { customBrands } = await store.get({ customBrands: [] });
-  await store.set({ customBrands: [...customBrands, { label, name, domains }] });
-  $("brand-name").value = "";
-  $("brand-domains").value = "";
+  if (!label || !domains.length) {
+    $("brand-msg").textContent = "Add a name and at least one real domain.";
+    return;
+  }
+  const result = await chrome.runtime.sendMessage({ type: "addBrand", label, domains });
+  $("brand-msg").textContent = result.error ? `Couldn't add it: ${result.error}` : `Added ${label}.`;
+  if (!result.error) {
+    $("brand-name").value = "";
+    $("brand-domains").value = "";
+  }
+  render();
+});
+
+$("forget-logins").addEventListener("click", async () => {
+  await store.set({ loginSeen: {} });
   render();
 });
 

@@ -1,7 +1,7 @@
 // Pure detection logic: no browser APIs in here, so it runs (and is tested)
 // in plain Node. background.js does the I/O and calls assess().
 
-import { FREE_HOSTING, RISKY_TLDS, SCAM_WORDS } from "./brands.js";
+import { EXTRA_PLATFORMS, GENERIC_WORDS, RISKY_TLDS, SCAM_WORDS, SHARED_HOSTS } from "./brands.js";
 import { toUnicode } from "./punycode.js";
 
 export const SEVERITIES = ["low", "medium", "high", "critical"];
@@ -29,10 +29,18 @@ const CONFUSABLES = {
 export function skeleton(text, twoLetterTricks = true) {
   let out = "";
   for (const ch of text.toLowerCase()) out += CONFUSABLES[ch] ?? ch;
+  out = out.replaceAll("0", "o").replaceAll("1", "l");
   if (twoLetterTricks) {
     out = out.replaceAll("rn", "m").replaceAll("vv", "w").replaceAll("cl", "d");
   }
-  return out.replaceAll("0", "o").replaceAll("1", "l");
+  return out;
+}
+
+// "1" passes for "l" and for "i", so try both.
+function skeletons(name, twoLetterTricks) {
+  const out = new Set([skeleton(name, twoLetterTricks)]);
+  if (name.includes("1")) out.add(skeleton(name.replaceAll("1", "i"), twoLetterTricks));
+  return [...out];
 }
 
 /** Damerau-Levenshtein (optimal string alignment): a swap of neighbours is one edit. */
@@ -62,16 +70,21 @@ function deletions(name) {
 // --- hostnames -------------------------------------------------------------------
 
 const IPV4 = /^\d{1,3}(\.\d{1,3}){3}$/;
-const PLATFORMS = [...FREE_HOSTING].sort((a, b) => b.length - a.length);
+const LOCAL_SUFFIXES = [".local", ".localhost", ".home.arpa", ".internal", ".lan", ".home", ".localdomain"];
+const LOCAL_HOSTS = new Set(["localhost", "home.arpa", "fritz.box", "speedport.ip"]);
+
+export function normaliseHost(host) {
+  return host.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
+}
 
 export function isIpAddress(host) {
-  return IPV4.test(host) || host.includes(":") || host.startsWith("[");
+  return IPV4.test(host) || host.includes(":");
 }
 
 /** Your own machine and home network: routers, printers, dev servers. */
 export function isLocalHost(rawHost) {
-  const host = rawHost.toLowerCase().replace(/^\[|\]$/g, "");
-  if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local")) return true;
+  const host = normaliseHost(rawHost);
+  if (LOCAL_HOSTS.has(host) || LOCAL_SUFFIXES.some((s) => host.endsWith(s))) return true;
   if (!host.includes(".") && !host.includes(":")) return true;
   if (host === "::1" || host.startsWith("fe80:") || /^f[cd][0-9a-f]{2}:/.test(host)) return true;
   if (!IPV4.test(host)) return false;
@@ -81,40 +94,47 @@ export function isLocalHost(rawHost) {
 }
 
 /**
+ * Public suffixes (co.uk) and shared platforms (github.io, myshopify.com),
+ * both straight from the Public Suffix List, wildcards included.
+ */
+export function makeSuffixes(icann, platforms) {
+  return { icann: new Set(icann), platforms: new Set([...platforms, ...EXTRA_PLATFORMS]) };
+}
+
+// How many labels at the end of the host form a suffix under these rules.
+function suffixLength(labels, rules) {
+  for (let k = Math.min(labels.length, 6); k >= 1; k--) {
+    if (rules.has(labels.slice(-k).join("."))) return k;
+    if (k >= 2 && rules.has(`*.${labels.slice(-(k - 1)).join(".")}`)) return k;
+  }
+  return 0;
+}
+
+/**
  * Split a hostname into the parts that matter:
  * "www.amazon.co.uk" -> sub "www", name "amazon", suffix "co.uk".
- * On free hosting the user-chosen label is the name ("x.vercel.app" -> "x").
+ * On shared platforms the user-chosen label is the name ("x.vercel.app" -> "x").
+ * Returns null for IPs and for hosts that are themselves a suffix or platform.
  */
 export function splitHost(rawHost, suffixes) {
-  const host = rawHost.toLowerCase().replace(/\.$/, "");
+  const host = normaliseHost(rawHost);
   if (!host || isIpAddress(host) || !host.includes(".")) return null;
   const labels = host.split(".");
 
-  for (const platform of PLATFORMS) {
-    if (host.endsWith(`.${platform}`)) {
-      const rest = host.slice(0, -platform.length - 1).split(".");
-      const label = rest.pop();
-      return {
-        host, sub: rest.join("."), name: toUnicode(label), suffix: platform,
-        registered: `${label}.${platform}`, platform,
-      };
-    }
-  }
+  const onPlatform = suffixLength(labels, suffixes.platforms);
+  const icann = suffixLength(labels, suffixes.icann);
+  const k = Math.max(onPlatform, icann, 1);
+  if (labels.length <= k) return null;
 
-  let suffix = labels.at(-1);
-  for (let k = Math.min(labels.length - 1, 4); k >= 2; k--) {
-    const candidate = labels.slice(-k).join(".");
-    if (suffixes.has(candidate)) {
-      suffix = candidate;
-      break;
-    }
-  }
-  const suffixLen = suffix.split(".").length;
-  if (labels.length <= suffixLen) return null;
-  const label = labels.at(-suffixLen - 1);
+  const suffix = labels.slice(-k).join(".");
+  const label = labels.at(-k - 1);
   return {
-    host, sub: labels.slice(0, -suffixLen - 1).join("."), name: toUnicode(label), suffix,
-    registered: `${label}.${suffix}`, platform: null,
+    host,
+    sub: labels.slice(0, -k - 1).join("."),
+    name: toUnicode(label),
+    suffix,
+    registered: `${label}.${suffix}`,
+    platform: onPlatform && onPlatform >= icann ? suffix : null,
   };
 }
 
@@ -129,25 +149,31 @@ export function splitHost(rawHost, suffixes) {
 export function buildIndex({ brands = [], topSites = [], mySites = [], knownSites = [] }, suffixes) {
   const entries = [];
   const legit = new Set();
-  const platforms = new Set(FREE_HOSTING);
+  const byDomain = new Map();
+  const generic = new Set([...GENERIC_WORDS, ...SCAM_WORDS]);
 
   for (const b of brands) {
-    entries.push({ kind: "brand", label: b.label, name: b.name, domain: b.domains[0], typos: b.typos });
-    b.domains.forEach((d) => legit.add(d));
+    const entry = { kind: "brand", label: b.label, name: b.name, domain: b.domains[0], typos: b.typos };
+    entries.push(entry);
+    for (const d of b.domains) {
+      legit.add(d);
+      if (!byDomain.has(d)) byDomain.set(d, entry);
+    }
   }
   for (const [kind, list] of [["mine", mySites], ["top", topSites]]) {
     for (const domain of list) {
-      if (platforms.has(domain)) continue;
       const parts = splitHost(domain, suffixes);
       if (!parts || parts.platform) continue;
       legit.add(domain);
-      if (parts.name.length >= 3) entries.push({ kind, label: domain, name: parts.name, domain });
+      if (parts.name.length < 3) continue;
+      const entry = { kind, label: domain, name: parts.name, domain };
+      entries.push(entry);
+      if (!byDomain.has(domain)) byDomain.set(domain, entry);
     }
   }
-
   // Popular sites below the top 10k: never protected against, never flagged.
   for (const domain of knownSites) {
-    if (!platforms.has(domain)) legit.add(domain);
+    if (!suffixes.platforms.has(domain)) legit.add(domain);
   }
 
   const byName = new Map();
@@ -171,18 +197,60 @@ export function buildIndex({ brands = [], topSites = [], mySites = [], knownSite
     if (e.kind !== "top" && e.typos !== false && e.name.length >= 5) {
       for (const v of deletions(e.name)) push(byDeletion, v, e);
     }
-    if (e.kind !== "top" || e.name.length >= 6) push(byComboName, e.name, e);
+    if (e.kind !== "top" || (e.name.length >= 6 && !generic.has(e.name))) push(byComboName, e.name, e);
   }
-  return { legit, byName, bySkeleton, byTopSkeleton, byDeletion, byComboName };
+  return { legit, byDomain, byName, bySkeleton, byTopSkeleton, byDeletion, byComboName };
 }
 
 function isLegitHost(parts, index) {
-  if (parts.platform) return index.legit.has(parts.registered);
+  // Government platforms like service.gov.uk only host real services.
+  if (parts.platform) return index.legit.has(parts.registered) || parts.platform.split(".").includes("gov");
   const labels = parts.host.split(".");
   for (let i = 0; i < labels.length - 1; i++) {
     if (index.legit.has(labels.slice(i).join("."))) return true;
   }
   return false;
+}
+
+/**
+ * What sort of host this is, for the phishing feeds and the trust list:
+ *  "site":   an ordinary site (or one tenant of a shared platform)
+ *  "legit":  a popular or protected site; only ever matched page by page
+ *  "shared": a host serving many people's content (docs.google.com, a bare
+ *            S3 endpoint); also only matched page by page
+ *  "ip":     a raw IP address
+ */
+export function classifyHost(rawHost, index, suffixes) {
+  const host = normaliseHost(rawHost);
+  if (isIpAddress(host)) return { host, kind: "ip", parts: null };
+  if (SHARED_HOSTS.includes(host)) return { host, kind: "shared", parts: null };
+  const parts = splitHost(host, suffixes);
+  if (!parts) return { host, kind: "shared", parts: null };
+  return { host, kind: isLegitHost(parts, index) ? "legit" : "site", parts };
+}
+
+/** "url:" keys for a page and every folder above it, for page-by-page matching. */
+export function pathKeys(host, pathname) {
+  const segments = pathname.split("/").filter(Boolean);
+  return segments.map((_, i) => `url:${host}/${segments.slice(0, i + 1).join("/")}`);
+}
+
+/**
+ * What "I trust this site" should remember. Never more than the site that
+ * was flagged: one page on sites.google.com mustn't trust all of Google.
+ */
+export function trustKey(url, index, suffixes) {
+  const u = new URL(url);
+  const c = classifyHost(u.hostname, index, suffixes);
+  if (c.kind === "site") return c.parts.registered;
+  if (c.kind === "ip") return c.host;
+  return pathKeys(c.host, u.pathname).at(-1) ?? `url:${c.host}`;
+}
+
+function isTrusted(u, trusted, c) {
+  if (c.kind === "site") return trusted.has(c.parts.registered) || trusted.has(c.host);
+  if (c.kind === "ip") return trusted.has(c.host);
+  return [`url:${c.host}`, ...pathKeys(c.host, u.pathname)].some((k) => trusted.has(k));
 }
 
 // --- lookalike checks ----------------------------------------------------------------
@@ -193,30 +261,52 @@ const pick = (e, ifStrong, ifTop) => (strong(e) ? ifStrong : ifTop);
 /**
  * Protected names hidden inside a longer name: "hmrc-tax-refund" contains
  * "hmrc", "paypallogin" contains "paypal". Short names (dpd, nhs, ups) only
- * count as a whole word, or "pickups" would contain "ups".
+ * count as a whole word or at the very start or end, or "pickups" would
+ * contain "ups".
  */
 function brandsInside(name, index) {
   const found = new Set();
+  const compact = name.replaceAll("-", "");
+  for (const token of [...name.split("-"), compact.slice(0, 3), compact.slice(0, 4), compact.slice(-3), compact.slice(-4)]) {
+    for (const e of index.byComboName.get(token) ?? []) {
+      if (e.name.length < 5) found.add(e);
+    }
+  }
   for (const token of name.split("-")) {
     for (const e of index.byComboName.get(token) ?? []) found.add(e);
   }
-  const compact = name.replaceAll("-", "");
+  // Anywhere in the name for protected brands; only at the start or end for
+  // top sites, or "allviralcollections" would contain lectio.dk.
   for (let i = 0; i < compact.length; i++) {
     for (let j = i + 5; j <= compact.length; j++) {
-      for (const e of index.byComboName.get(compact.slice(i, j)) ?? []) found.add(e);
+      const edge = i === 0 || j === compact.length;
+      for (const e of index.byComboName.get(compact.slice(i, j)) ?? []) {
+        if (edge || strong(e)) found.add(e);
+      }
     }
   }
   return [...found].filter((e) => e.name !== name);
 }
 
-function lookalikeMatches(parts, index) {
+/**
+ * A scam word next to the brand. Short ones (tax, fee, fine) have to stand
+ * alone, or appletaxi.co.uk would be "Apple + tax".
+ */
+function scamWordIn(name, brandName) {
+  const tokens = name.split("-");
+  const rest = name.replaceAll("-", "").replace(brandName, "");
+  return SCAM_WORDS.find((w) => tokens.includes(w) || rest === w
+    || (w.length >= 6 && (rest.startsWith(w) || rest.endsWith(w))));
+}
+
+function lookalikeMatches(parts, index, suffixes) {
   const { name } = parts;
   const found = [];
-  const add = (target, severity, reason) =>
-    found.push({ target, severity, reasons: [reason] });
+  const add = (target, severity, reason) => found.push({ target, severity, reasons: [reason] });
 
   // 1. Looks identical once lookalike characters are swapped back
-  const twin = index.bySkeleton.get(skeleton(name)) ?? index.byTopSkeleton.get(skeleton(name, false));
+  const twin = skeletons(name, true).map((s) => index.bySkeleton.get(s)).find(Boolean)
+    ?? skeletons(name, false).map((s) => index.byTopSkeleton.get(s)).find(Boolean);
   if (twin && twin.name !== name) {
     const m = { target: twin, severity: pick(twin, "critical", "high"), reasons: [`looks identical to ${twin.domain} at a glance`] };
     if (!/^[\x00-\x7f]*$/.test(name)) {
@@ -243,39 +333,48 @@ function lookalikeMatches(parts, index) {
       seen.add(t);
       if (editDistance(name, t.name) === 1) {
         // 5-letter names have lots of real neighbours (monzo/mondo/moneo)
-        const sev = t.name.length >= 6 ? "high" : "medium";
-        add(t, sev, `1 character different from ${t.domain}`);
+        add(t, t.name.length >= 6 ? "high" : "medium", `1 character different from ${t.domain}`);
       }
     }
   }
 
-  // 4. Brand + scam word, and brand names on free hosting
+  // 4. Brand + scam word, and brand names on shared platforms
   for (const t of brandsInside(name, index)) {
-    const rest = name.replaceAll("-", "").replace(t.name, "");
-    const word = SCAM_WORDS.find((w) => rest.includes(w));
+    const word = scamWordIn(name, t.name);
     if (word) {
-      add(t, pick(t, "high", "medium"),
-        `contains "${t.name}" plus "${word}", a word common in scams`);
+      add(t, pick(t, "high", "medium"), `contains "${t.name}" plus "${word}", a word common in scams`);
     }
-    if (parts.platform) {
-      add(t, "medium",
-        `puts ${t.label}'s name on ${parts.platform}, free hosting that ${t.label} doesn't use`);
+    if (parts.platform && strong(t)) {
+      add(t, "medium", `puts ${t.label}'s name on ${parts.platform}, where anyone can make a site`);
     }
   }
+
+  if (!parts.sub) return found;
+  const subLabels = parts.sub.split(".");
 
   // 5. A real domain used as a fake subdomain: paypal.com.secure-check.bid
-  if (parts.sub) {
-    const labels = parts.sub.split(".");
-    for (let i = 0; i < labels.length - 1; i++) {
-      for (let j = i + 2; j <= labels.length; j++) {
-        const fake = labels.slice(i, j).join(".");
-        if (index.legit.has(fake)) {
-          const t = index.byName.get(splitHost(fake, new Set())?.name) ?? { kind: "top", label: fake, domain: fake };
-          add({ ...t, domain: fake }, "high",
-            `starts with ${fake} to look real, but the site is actually ${parts.registered}`);
-        }
-      }
+  fake: for (let i = 0; i < subLabels.length - 1; i++) {
+    for (let j = subLabels.length; j >= i + 2; j--) {
+      const fake = subLabels.slice(i, j).join(".");
+      if (!index.legit.has(fake)) continue;
+      const byName = index.byName.get(splitHost(fake, suffixes)?.name);
+      const t = (byName && strong(byName) ? byName : index.byDomain.get(fake))
+        ?? { kind: "top", label: fake, domain: fake };
+      add(t, "high", `starts with ${fake} to look real, but the site is actually ${parts.registered}`);
+      break fake;
     }
+  }
+
+  // 6. A protected name in the subdomain: paypal-login.secure-host.net
+  const subTokens = parts.sub.split(/[.-]/);
+  const already = new Set(found.map((m) => m.target.name));
+  for (const token of new Set(subTokens)) {
+    const t = index.byComboName.get(token)?.find(strong);
+    if (!t || already.has(t.name)) continue;
+    already.add(t.name);
+    const word = SCAM_WORDS.find((w) => subTokens.includes(w) || name.split("-").includes(w));
+    add(t, word ? "high" : "medium",
+      `mentions ${t.label} in the subdomain, but the site is actually ${parts.registered}`);
   }
 
   return found;
@@ -286,26 +385,26 @@ function lookalikeMatches(parts, index) {
 function scriptsIn(text) {
   const scripts = new Set();
   for (const ch of text) {
-    if (/[a-z]/.test(ch)) scripts.add("Latin");
-    else if (/[Ѐ-ӿ]/.test(ch)) scripts.add("Cyrillic");
-    else if (/[Ͱ-Ͽ]/.test(ch)) scripts.add("Greek");
-    else if (/[À-ɏ]/.test(ch)) scripts.add("Latin");
-    else if (/[^\x00-\x7f]/.test(ch)) scripts.add("other");
+    if (/\p{Script=Latin}/u.test(ch)) scripts.add("Latin");
+    else if (/\p{Script=Cyrillic}/u.test(ch)) scripts.add("Cyrillic");
+    else if (/\p{Script=Greek}/u.test(ch)) scripts.add("Greek");
+    else if (/\p{L}/u.test(ch)) scripts.add("other");
   }
   return [...scripts];
 }
 
 export function warningSigns(url, parts, page) {
   const signs = [];
-  const host = url.hostname.replace(/^\[|\]$/g, "");
-  if (isIpAddress(host)) {
+  if (isIpAddress(normaliseHost(url.hostname))) {
     signs.push([2, "the address is a raw IP address instead of a domain name"]);
   }
   if (url.protocol === "http:" && page.hasLogin) {
     signs.push([2, "asks for a password over an unencrypted (http) connection"]);
   }
   if (parts) {
-    const scripts = scriptsIn(parts.name);
+    // Latin mixed with Cyrillic or Greek is the homoglyph trick. Chinese or
+    // Japanese next to Latin letters is normal in those countries.
+    const scripts = scriptsIn(parts.name).filter((x) => x !== "other");
     if (scripts.length > 1) {
       signs.push([2, `mixes letters from different alphabets (${scripts.join(" and ")}) in one name`]);
     }
@@ -320,7 +419,7 @@ export function warningSigns(url, parts, page) {
       signs.push([1, "has an unusually deep chain of subdomains"]);
     }
     if (parts.platform && page.hasLogin) {
-      signs.push([1, `is a login page on free hosting (${parts.platform})`]);
+      signs.push([1, `is a login page on a shared platform (${parts.platform})`]);
     }
   }
   return signs;
@@ -332,7 +431,7 @@ const QUIET = Object.freeze({ severity: null, show: false, title: "", brand: nul
 
 /**
  * Decide how suspicious a page is.
- *  feedHit: { source } when the host is on a phishing feed
+ *  feedHit: { source } when the page is on a phishing feed
  *  scanHit: an entry from an imported lookalike-watch scan report
  */
 export function assess({ url, page = { hasLogin: false }, index, suffixes, trusted = new Set(), feedHit = null, scanHit = null }) {
@@ -345,9 +444,9 @@ export function assess({ url, page = { hasLogin: false }, index, suffixes, trust
   if (u.protocol !== "http:" && u.protocol !== "https:") return QUIET;
   if (isLocalHost(u.hostname)) return QUIET;
 
-  const parts = splitHost(u.hostname, suffixes);
-  const key = parts?.registered ?? u.hostname;
-  if (trusted.has(key) || trusted.has(u.hostname)) return QUIET;
+  const c = classifyHost(u.hostname, index, suffixes);
+  if (isTrusted(u, trusted, c)) return QUIET;
+  const { parts } = c;
 
   const results = [];
   if (feedHit) {
@@ -363,11 +462,11 @@ export function assess({ url, page = { hasLogin: false }, index, suffixes, trust
     });
   }
 
-  const legit = parts ? isLegitHost(parts, index) : false;
+  const legit = c.kind === "legit" || c.kind === "shared";
   if (legit && !results.length) return QUIET;
 
-  if (parts && !legit) {
-    for (const m of lookalikeMatches(parts, index)) {
+  if (c.kind === "site") {
+    for (const m of lookalikeMatches(parts, index, suffixes)) {
       results.push({
         severity: m.severity,
         title: `This looks like a fake ${m.target.label} site`,

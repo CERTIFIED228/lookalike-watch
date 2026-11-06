@@ -6,14 +6,16 @@
 //   100k (so the extension has never seen them)
 // phishing-hosts.txt: a sample of Phishing.Database's active list
 //
-// Only the pattern checks are measured here: feed lookups are left out,
-// since a site on the feed would be caught regardless of its name.
+// Pattern checks are measured without the feeds (a listed site would be
+// caught whatever its name). Pass a downloaded copy of the Phishing.Database
+// list as a third argument to also count feed false alarms on the legit set.
 import { readFileSync } from "node:fs";
 import { DEFAULT_BRANDS } from "../brands.js";
-import { assess, buildIndex } from "../detect.js";
+import { assess, buildIndex, makeSuffixes } from "../detect.js";
+import { lookupKeys, parseHostList } from "../feeds.js";
 
 const data = (name) => JSON.parse(readFileSync(new URL(`../data/${name}`, import.meta.url), "utf8"));
-const suffixes = new Set(data("suffixes.json"));
+const suffixes = makeSuffixes(data("suffixes.json"), data("platforms.json"));
 const index = buildIndex({
   brands: DEFAULT_BRANDS, topSites: data("top-sites.json"), knownSites: data("known-sites.json"),
 }, suffixes);
@@ -32,11 +34,20 @@ function rate(file, hasLogin) {
   return `${shown}/${hosts.length} warned (${pct}%) ${JSON.stringify(bySeverity)}`;
 }
 
-const [legit, phish] = process.argv.slice(2);
+function feedFalseAlarms(legitFile, feedFile) {
+  const ctx = { index, suffixes };
+  const listed = new Set(parseHostList(readFileSync(feedFile, "utf8"), ctx));
+  const hosts = readFileSync(legitFile, "utf8").split("\n").map((h) => h.trim()).filter(Boolean);
+  const hits = hosts.filter((h) => lookupKeys(`https://${h}/`, ctx).some((k) => listed.has(k)));
+  return `${hits.length}/${hosts.length} legit hosts match the feed ${JSON.stringify(hits.slice(0, 15))}`;
+}
+
+const [legit, phish, feed] = process.argv.slice(2);
 if (!legit || !phish) {
-  console.error("usage: node scripts/benchmark.mjs legit-hosts.txt phishing-hosts.txt");
+  console.error("usage: node scripts/benchmark.mjs legit-hosts.txt phishing-hosts.txt [feed.txt]");
   process.exit(2);
 }
 console.log("legit, normal page:  ", rate(legit, false));
 console.log("legit, login page:   ", rate(legit, true));
 console.log("phishing, login page:", rate(phish, true));
+if (feed) console.log("feed on legit hosts: ", feedFalseAlarms(legit, feed));

@@ -45,3 +45,34 @@ test("ip addresses and single-label hosts aren't domains", () => {
 test("i and l are not treated as lookalikes in lowercase addresses", () => {
   assert.notEqual(skeleton("hoteis"), skeleton("hotels"));
 });
+
+test("shared platforms from the public suffix list are split per tenant", () => {
+  assert.equal(splitHost("paypal-login.uk.com", SUFFIXES).platform, "uk.com");
+  assert.equal(splitHost("shop.myshopify.com", SUFFIXES).name, "shop");
+  assert.equal(splitHost("evil.wordpress.com", SUFFIXES).platform, "wordpress.com");
+  assert.equal(splitHost("abc.weeblysite.com", SUFFIXES).name, "abc");
+});
+
+test("platforms with an extra level use the right label", () => {
+  const azure = splitHost("myacct.z13.web.core.windows.net", SUFFIXES);
+  assert.equal(azure.name, "myacct");
+  assert.equal(azure.suffix, "z13.web.core.windows.net");
+  assert.equal(splitHost("myapp.uc.r.appspot.com", SUFFIXES).name, "myapp");
+});
+
+test("a host that is itself a platform root has no name", () => {
+  assert.equal(splitHost("s3.us-east-1.amazonaws.com", SUFFIXES), null);
+  assert.equal(splitHost("bucket.s3.us-east-1.amazonaws.com", SUFFIXES).name, "bucket");
+});
+
+test("wildcard public suffixes are respected", () => {
+  assert.equal(splitHost("shop.example.com.bd", SUFFIXES).registered, "example.com.bd");
+});
+
+test("a trailing dot doesn't change anything", () => {
+  assert.equal(splitHost("paypa1.com.", SUFFIXES).registered, "paypa1.com");
+});
+
+test("digits are swapped back before two-letter tricks", () => {
+  assert.equal(skeleton("ic1oud"), skeleton("icloud"));
+});
