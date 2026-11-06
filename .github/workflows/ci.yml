@@ -21,6 +21,27 @@ jobs:
       - run: ruff check .
       - run: pytest
 
+  extension:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm test
+        working-directory: extension
+
+  extension-browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -e ".[dev]" playwright
+      - run: playwright install --with-deps chromium
+      - run: pytest tests/test_extension_e2e.py
+
   secrets:
     runs-on: ubuntu-latest
     steps:
