@@ -1,10 +1,26 @@
 # lookalike-watch
 
-Finds registered domains that imitate yours (`paypa1.com`, `pаypal.com` with a Cyrillic "а", `paypal-login.com`) and keeps watching for new ones.
+[![CI](https://github.com/CERTIFIED228/lookalike-watch/actions/workflows/ci.yml/badge.svg)](https://github.com/CERTIFIED228/lookalike-watch/actions/workflows/ci.yml)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue)
+![Chrome](https://img.shields.io/badge/Chrome%20%2F%20Edge-Manifest%20V3-green)
+![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
-Most phishing starts with a domain that looks right at a glance. Brands usually find out about these after customers have already been hit. This tool tries to close that gap using only public data: DNS and Certificate Transparency logs.
+Two tools against fake websites:
 
-## What it does
+- **A Chrome/Edge extension** that warns you when the site you're on is a fake copy of a real one (`paypa1.com`, `pаypal.com` with a Cyrillic "а", `royalmail-redelivery.vercel.app`) or is on a list of ~390,000 known phishing sites. It says how serious it is and why.
+- **A Python scanner** that finds registered domains imitating a brand, scores each one 0-100, and keeps watching for new ones.
+
+<p align="center">
+  <img src="docs/warning.png" alt="Warning shown on a fake PayPal login page" width="640">
+  &nbsp;
+  <img src="docs/popup.png" alt="Checking a link from the toolbar popup" width="220">
+</p>
+
+Most phishing starts with a domain that looks right at a glance. Brands usually find out about these after customers have already been hit. The scanner closes that gap from the brand's side using only public data (DNS and Certificate Transparency logs), and the extension covers the person about to type their password.
+
+**Quick start:** [install the extension](#install-the-extension) · [run the scanner](#install) · [how accurate it is](#how-accurate-it-is)
+
+## The scanner
 
 1. **Generates lookalikes** of a domain using 12 techniques (typos, homoglyphs, bit flips, TLD swaps, brand + keyword combos...).
 2. **Checks which ones exist** with parallel DNS lookups (NS, A/AAAA, MX).
@@ -98,10 +114,14 @@ or with Windows Task Scheduler, using the program `.venv\Scripts\lookalike-watch
 
 The `extension/` folder is a Chrome/Edge extension that does the protecting side: while you browse, it shows a small notification when a site looks like a fake copy of a real one, or is a known phishing site. The notification gives a severity and the reasons.
 
-### Install
+### Install the extension
 
-1. Open `chrome://extensions` (or `edge://extensions`) and turn on **Developer mode**.
-2. Click **Load unpacked** and pick the `extension` folder.
+1. Download this repo: **Code → Download ZIP**, then unzip it (or `git clone` it).
+2. In Chrome go to `chrome://extensions` (Edge: `edge://extensions`) and switch on **Developer mode** in the corner.
+3. Click **Load unpacked** and choose the `extension` folder inside it.
+4. Click the puzzle-piece icon in the toolbar and pin **lookalike-watch** so you can see its badge.
+
+The phishing lists download by themselves in the background (about 30 seconds the first time). To check it works, click the icon and paste `paypa1.com` into **Check a link**: it should say CRITICAL.
 
 Then browse as normal. Nothing shows up unless a site looks wrong.
 
