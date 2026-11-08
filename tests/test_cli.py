@@ -1,4 +1,5 @@
 import json
+import os
 
 import pytest
 
@@ -201,3 +202,12 @@ def test_output_never_crashes_on_a_non_utf8_console():
         capture_output=True, env=env,
     )
     assert proc.returncode == 0, proc.stderr.decode(errors="replace")
+
+
+def test_env_file_is_read_from_the_folder_it_runs_in(tmp_path, monkeypatch, capsys):
+    (tmp_path / ".env").write_text("LOOKALIKE_WEBHOOK_URL=https://example.com/hook\n")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("LOOKALIKE_WEBHOOK_URL", "unset")
+    monkeypatch.delenv("LOOKALIKE_WEBHOOK_URL")
+    assert cli.main(["generate", "paypal.com", "-t", "omission"]) == 0
+    assert os.environ["LOOKALIKE_WEBHOOK_URL"] == "https://example.com/hook"

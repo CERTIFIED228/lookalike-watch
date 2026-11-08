@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 
 import requests
-from dotenv import load_dotenv
+from dotenv import find_dotenv, load_dotenv
 
 from . import __version__
 from .alerts import AlertError, mask_url, send_webhook
@@ -240,7 +240,9 @@ def _safe_streams() -> None:
 
 def main(argv: list[str] | None = None) -> int:
     _safe_streams()
-    load_dotenv()
+    env_file = find_dotenv(usecwd=True)
+    if env_file:
+        load_dotenv(env_file)
     parser = build_parser()
     args = parser.parse_args(argv)
     handlers = {"generate": cmd_generate, "scan": cmd_scan, "watch": cmd_watch}
