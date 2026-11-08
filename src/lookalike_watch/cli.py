@@ -156,7 +156,11 @@ def _scan(args, brand):
     if result.errors:
         msg += f", {len(result.errors)} lookups timed out"
     log(msg)
-    if result.unverified:
+    if result.unverified and args.nameservers:
+        shown = ", ".join(result.unverified[:5]) + (", ..." if len(result.unverified) > 5 else "")
+        log(f"warning: {len(result.unverified)} answer(s) had no nameservers, so they couldn't "
+            f"be confirmed as registered and were left out: {shown}")
+    elif result.unverified:
         log(f"warning: {len(result.unverified)} answer(s) had no nameservers, so they came "
             "from your DNS resolver (ISP filtering?) rather than a real domain. They were "
             "left out. For a clean scan, add --nameserver 1.1.1.1")

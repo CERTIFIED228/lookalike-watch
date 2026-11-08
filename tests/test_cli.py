@@ -144,6 +144,17 @@ def test_unverified_answers_are_warned_about(monkeypatch, capsys, fake_net):
     assert "--nameserver" in err
 
 
+def test_no_advice_to_add_a_nameserver_that_was_already_given(monkeypatch, capsys, fake_net):
+    filtered = {**FAKE_DNS, "paypa.com": DnsRecord(a=["81.99.162.48"])}
+    monkeypatch.setattr(cli, "make_lookup",
+                        lambda timeout, nameservers=None: filtered.get)
+    cli.main(["scan", "paypal.com", "-t", "omission", "--nameserver", "1.1.1.1"])
+    err = capsys.readouterr().err
+    assert "1 answer(s) had no nameservers" in err
+    assert "left out: paypa.com" in err
+    assert "add --nameserver" not in err
+
+
 def test_lying_resolver_stops_the_scan(monkeypatch, capsys, fake_net):
     monkeypatch.setattr(cli, "make_lookup",
                         lambda timeout, nameservers=None: lambda n: DnsRecord(a=["198.51.100.1"]))
