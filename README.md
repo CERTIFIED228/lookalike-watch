@@ -5,10 +5,7 @@
 ![Chrome](https://img.shields.io/badge/Chrome%20%2F%20Edge-Manifest%20V3-green)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
-Two tools against fake websites:
-
-- **A Chrome/Edge extension** that warns you when the site you're on is a fake copy of a real one (`paypa1.com`, `pаypal.com` with a Cyrillic "а", `royalmail-redelivery.vercel.app`) or is on a list of ~390,000 known phishing sites. It says how serious it is and why.
-- **A Python scanner** that finds registered domains imitating a brand, scores each one 0-100, and keeps watching for new ones.
+A browser extension that warns you when the website you're on is a fake copy of a real one, and a scanner that finds those fake sites as soon as they're registered.
 
 <p align="center">
   <img src="docs/warning.png" alt="Warning shown on a fake PayPal login page" width="640">
@@ -16,116 +13,55 @@ Two tools against fake websites:
   <img src="docs/popup.png" alt="Checking a link from the toolbar popup" width="220">
 </p>
 
-Most phishing starts with a domain that looks right at a glance. Brands usually find out about these after customers have already been hit. The scanner closes that gap from the brand's side using only public data (DNS and Certificate Transparency logs), and the extension covers the person about to type their password.
+## Why I made it
 
-**Quick start:** [install the extension](#install-the-extension) · [run the scanner](#install) · [how accurate it is](#how-accurate-it-is)
+Most online scams start with a website that looks right at a glance: `paypa1.com` instead of `paypal.com`, a Royal Mail "redelivery" page, an HMRC "tax refund" site. If you grew up online you learn to spot most of them. A lot of older people didn't, and the internet they first learned on didn't have parcel texts with links in them, fake login pages that copy a bank down to the logo, or web addresses with a Cyrillic "а" that looks exactly like an "a". Scammers know that.
 
-## The scanner
+I wanted something that does the spotting for them, and says in plain words what's wrong and how serious it is, before they type in a password or card number.
+
+## Download and try it
+
+### The browser extension (Chrome or Edge)
+
+1. [Download lookalike-watch-extension.zip](https://github.com/CERTIFIED228/lookalike-watch/releases/latest/download/lookalike-watch-extension.zip) and unzip it (on Windows: right-click it, then **Extract All**).
+2. In Chrome go to `chrome://extensions` (in Edge, `edge://extensions`) and switch on **Developer mode**.
+3. Click **Load unpacked** and choose the folder you just unzipped.
+4. Click the puzzle-piece icon in the toolbar and pin **lookalike-watch** so you can see its badge.
+
+To check it's working, click its icon and paste `paypa1.com` into **Check a link**. It should say CRITICAL. After that, just browse as normal: nothing shows up unless a site looks wrong. The phishing lists download by themselves the first time, which takes about 30 seconds.
+
+It isn't on the Chrome Web Store, which is why Chrome needs Developer mode to load it. Chrome also says it can "read and change all your data on all websites". That's because it has to run on every page to check it. It only looks at the address and whether the page has a login form, and nothing is ever sent anywhere: the only things it downloads are the two public phishing lists.
+
+### The scanner (Python 3.10 or newer)
+
+```bash
+pip install https://github.com/CERTIFIED228/lookalike-watch/releases/download/v0.1.0/lookalike_watch-0.1.0-py3-none-any.whl
+lookalike-watch scan paypal.com --nameserver 1.1.1.1
+```
+
+On Windows, if `lookalike-watch` isn't recognised, run `python -m lookalike_watch` instead. Every version is on the [releases page](https://github.com/CERTIFIED228/lookalike-watch/releases).
+
+## What it does
+
+**The extension** protects the person about to type their password. On every page it checks whether the site is:
+
+- a lookalike of a site worth protecting: 43 often-phished brands (banks, PayPal, Amazon, Royal Mail, HMRC, the NHS...), the 10,000 most visited sites, and any site you log into regularly;
+- on a list of about 390,000 known phishing sites;
+- showing the warning signs of a fake login page, like a password form on a raw IP address.
+
+If something's wrong it shows a warning on the page with how serious it is (low to critical) and the reasons, plus a button to go to the real site.
+
+**The scanner** works from the brand's side. Give it a domain like `paypal.com` and it:
 
 1. **Generates lookalikes** of a domain using 12 techniques (typos, homoglyphs, bit flips, TLD swaps, brand + keyword combos...).
 2. **Checks which ones exist** with parallel DNS lookups (NS, A/AAAA, MX).
 3. **Searches Certificate Transparency logs** (via [crt.sh](https://crt.sh)) for any certificate with the brand name in it. This catches things like `paypal-account-review.com` that no typo generator would ever come up with.
 4. **Scores each registered domain 0-100** and lists the reasons behind the score.
 5. **Watch mode** re-scans on a schedule and posts *new* findings to Slack or Discord.
-6. **A browser extension** warns you while browsing when a site is a lookalike or a known phishing site (see [Browser extension](#browser-extension)).
 
 It never visits the suspicious sites. Everything comes from DNS and public certificate logs.
 
-## Install
-
-Needs Python 3.10+.
-
-```bash
-git clone https://github.com/CERTIFIED228/lookalike-watch.git
-cd lookalike-watch
-python -m venv .venv
-```
-
-Activate the venv: `.venv\Scripts\activate` on Windows, `source .venv/bin/activate` on macOS/Linux. Then:
-
-```bash
-pip install -e .
-```
-
-## Usage
-
-### List possible lookalikes (offline)
-
-```console
-$ lookalike-watch generate paypal.com
-paypl.com           omission
-paypall.com         repetition
-papyal.com          transposition
-paypel.com          vowel-swap
-pay-pal.com         hyphenation
-pay0al.com          replacement
-paqypal.com         insertion
-qaypal.com          bitsquatting
-paypals.com         addition
-pаypal.com          homoglyph  (xn--pypal-4ve.com)
-paypal-login.com    combosquat
-paypal.net          tld-swap
-...
-267 candidates
-```
-
-### Scan for the ones that are registered
-
-```bash
-lookalike-watch scan paypal.com
-lookalike-watch scan paypal.com --ct                # also search CT logs
-lookalike-watch scan paypal.com --ct -o report.json # save as JSON (or .csv)
-lookalike-watch scan paypal.com --min-score 50      # only high/critical
-lookalike-watch scan paypal.com -t homoglyph -t combosquat
-```
-
-Example output (from the local test DNS zone in `tests/`, not live data):
-
-```
-SCORE  LEVEL     DOMAIN                          TECHNIQUE   TOP REASON
-85     critical  pаypal.com (xn--pypal-4ve.com)  homoglyph   looks identical to 'paypal' at a glance
-75     critical  paypa1.com                      homoglyph   looks identical to 'paypal' at a glance
-55     high      paypal-login.com                combosquat  contains the brand name 'paypal'
-28     low       paypl.com                       omission    looks parked (for sale or ad page) - keep an eye on it
-10     low       paypal.net                      tld-swap    uses the same nameservers as paypal.com, probably owned by the brand
-```
-
-The full list of reasons for each domain is in the JSON/CSV output.
-
-### Watch for new ones
-
-```bash
-cp .env.example .env        # then paste your Slack/Discord webhook into .env
-lookalike-watch watch paypal.com --ct --baseline --once   # record what already exists
-lookalike-watch watch paypal.com --ct                      # re-scan every hour
-```
-
-Only domains it hasn't seen before trigger an alert. Seen domains are stored in `.lookalike-watch/<domain>.json`. If an alert fails to send, those domains aren't marked as seen, so the next run tries again.
-
-To run it on a schedule instead of leaving it open, use `--once` with cron:
-
-```cron
-0 * * * * cd /path/to/lookalike-watch && .venv/bin/lookalike-watch watch paypal.com --ct --once
-```
-
-or with Windows Task Scheduler, using the program `.venv\Scripts\lookalike-watch.exe` and the arguments `watch paypal.com --ct --once`.
-
-## Browser extension
-
-The `extension/` folder is a Chrome/Edge extension that does the protecting side: while you browse, it shows a small notification when a site looks like a fake copy of a real one, or is a known phishing site. The notification gives a severity and the reasons.
-
-### Install the extension
-
-1. Download this repo: **Code → Download ZIP**, then unzip it (or `git clone` it).
-2. In Chrome go to `chrome://extensions` (Edge: `edge://extensions`) and switch on **Developer mode** in the corner.
-3. Click **Load unpacked** and choose the `extension` folder inside it.
-4. Click the puzzle-piece icon in the toolbar and pin **lookalike-watch** so you can see its badge.
-
-The phishing lists download by themselves in the background (about 30 seconds the first time). To check it works, click the icon and paste `paypa1.com` into **Check a link**: it should say CRITICAL.
-
-Then browse as normal. Nothing shows up unless a site looks wrong.
-
-Chrome lists the extension as able to "read and change all your data on all websites". That's because it has to run on every page to check it. It only looks at the address and whether the page has a login form, and nothing is ever sent anywhere: the only network requests are the two public list downloads from GitHub.
+## How the extension works
 
 ### What it checks
 
@@ -199,14 +135,80 @@ Checking a page takes about 0.04 ms.
 - Medium and low warnings need a login form. A password field inside an iframe or a closed shadow root, or one that appears more than 15 seconds after the page loads, isn't seen.
 - Wildcard exceptions in the Public Suffix List (about two rules) aren't handled.
 
-### Data
+### Data the extension ships with
 
 - `data/top-sites.json` and `data/known-sites.json`: [Chrome UX Report](https://developer.chrome.com/docs/crux) top sites via [zakird/crux-top-lists](https://github.com/zakird/crux-top-lists) (CC BY 4.0).
 - `data/popular-hosts.json`: subdomains among those top sites (`support.roku.com`), so a feed listing for one isn't matched as a hacked subdomain.
 - `data/suffixes.json` and `data/platforms.json`: the ICANN and private parts of the [Public Suffix List](https://publicsuffix.org/), multi-part endings (`co.uk`) and shared services (`github.io`).
 - Rebuild them with `python extension/scripts/build_data.py`.
 
-## Techniques
+## How the scanner works
+
+### Using the scanner
+
+#### List possible lookalikes (offline)
+
+```console
+$ lookalike-watch generate paypal.com
+paypl.com           omission
+paypall.com         repetition
+papyal.com          transposition
+paypel.com          vowel-swap
+pay-pal.com         hyphenation
+pay0al.com          replacement
+paqypal.com         insertion
+qaypal.com          bitsquatting
+paypals.com         addition
+pаypal.com          homoglyph  (xn--pypal-4ve.com)
+paypal-login.com    combosquat
+paypal.net          tld-swap
+...
+267 candidates
+```
+
+#### Scan for the ones that are registered
+
+```bash
+lookalike-watch scan paypal.com
+lookalike-watch scan paypal.com --ct                # also search CT logs
+lookalike-watch scan paypal.com --ct -o report.json # save as JSON (or .csv)
+lookalike-watch scan paypal.com --min-score 50      # only high/critical
+lookalike-watch scan paypal.com -t homoglyph -t combosquat
+```
+
+Example output (from the local test DNS zone in `tests/`, not live data):
+
+```
+SCORE  LEVEL     DOMAIN                          TECHNIQUE   TOP REASON
+85     critical  pаypal.com (xn--pypal-4ve.com)  homoglyph   looks identical to 'paypal' at a glance
+75     critical  paypa1.com                      homoglyph   looks identical to 'paypal' at a glance
+55     high      paypal-login.com                combosquat  contains the brand name 'paypal'
+28     low       paypl.com                       omission    looks parked (for sale or ad page) - keep an eye on it
+10     low       paypal.net                      tld-swap    uses the same nameservers as paypal.com, probably owned by the brand
+```
+
+The full list of reasons for each domain is in the JSON/CSV output.
+
+#### Watch for new ones
+
+Put your Slack or Discord webhook URL in an environment variable called `LOOKALIKE_WEBHOOK_URL`, or in a `.env` file in the folder you run it from (copy [.env.example](.env.example)). Then:
+
+```bash
+lookalike-watch watch paypal.com --ct --baseline --once   # record what already exists
+lookalike-watch watch paypal.com --ct                      # re-scan every hour
+```
+
+Only domains it hasn't seen before trigger an alert. Seen domains are stored in `.lookalike-watch/<domain>.json`. If an alert fails to send, those domains aren't marked as seen, so the next run tries again.
+
+To run it on a schedule instead of leaving it open, use `--once` with cron:
+
+```cron
+0 * * * * cd /path/to/lookalike-watch && .venv/bin/lookalike-watch watch paypal.com --ct --once
+```
+
+or with Windows Task Scheduler, using the program `.venv\Scripts\lookalike-watch.exe` and the arguments `watch paypal.com --ct --once`.
+
+### Techniques
 
 | Technique | Example (paypal.com) | Idea |
 |---|---|---|
@@ -224,7 +226,7 @@ Checking a page takes about 0.04 ms.
 | tld-swap | paypal.net | same name, different TLD |
 | ct-log | paypal-account-review.com | found in a real certificate |
 
-## How scoring works
+### How scoring works
 
 Points are added up and capped at 100:
 
@@ -247,7 +249,7 @@ Levels: **critical** 70+, **high** 50+, **medium** 30+, **low** below that.
 
 Mail counts for a lot because a lookalike with MX records can be used to send convincing phishing emails, and it can also quietly receive mail people misaddress to it.
 
-## Keeping the webhook secret
+### Keeping the webhook secret
 
 A webhook URL is a credential, because anyone who has it can post to your channel. So:
 
@@ -263,13 +265,13 @@ pip install pre-commit
 pre-commit install
 ```
 
-## DNS gotchas
+### DNS gotchas
 
 - Some ISP resolvers answer for domains that don't exist (to show you an ad page), which would make every candidate look registered. The tool checks for this before every scan and stops if it spots it. Use `--nameserver 1.1.1.1` to get around it.
 - Some filters only lie about names that look like a well-known brand. The check tests a made-up brand name too (`paypal-<random>.com`). And because every registered domain has NS records, any answer without them is treated as made up by the resolver: it's left out of the results and you get a warning.
 - Lookups that time out are counted and reported at the end rather than silently treated as "not registered".
 
-## What a real scan looks like
+### What a real scan looks like
 
 The first live scan of paypal.com (from a home connection in the UK) found 217 of 267 candidates "registered". Digging into the results showed:
 
@@ -279,7 +281,7 @@ The first live scan of paypal.com (from a home connection in the UK) found 217 o
 
 After the fixes, the same data gives 2 critical and 12 high instead of 43 and 78. The top ones were worth a human look.
 
-## Limitations
+### Limitations
 
 - Registered does not mean malicious. Plenty of lookalikes are owned by the brand, parked, or just someone's unrelated project. The score is there to help you prioritise, not to give a verdict.
 - Ownership detection is heuristic and only uses nameservers. Mail records are ignored on purpose: anyone can point MX at the brand's mail servers, but pointing NS at nameservers you don't control just breaks your own domain. That only holds if *every* nameserver is the brand's: a mixed set still resolves through the attacker's one, so a single borrowed nameserver proves nothing. A brand's country sites (like `paypal.cn`) can use completely different DNS and still be legitimate. Add those with `--allow`.
@@ -290,6 +292,10 @@ After the fixes, the same data gives 2 critical and 12 high instead of 43 and 78
 ## Development
 
 ```bash
+git clone https://github.com/CERTIFIED228/lookalike-watch.git
+cd lookalike-watch
+python -m venv .venv
+.venv\Scripts\activate          # Windows; on macOS/Linux: source .venv/bin/activate
 pip install -e ".[dev]"
 pytest
 ruff check .
