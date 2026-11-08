@@ -255,7 +255,7 @@ A webhook URL is a credential, because anyone who has it can post to your channe
 
 - it's only read from the LOOKALIKE\_WEBHOOK\_URL environment variable or .env, never from a command-line flag (flags end up in shell history and process lists)
 - .env is in .gitignore, and .env.example is what gets committed
-- logs and error messages only ever show https://hooks.slack.com/\*\*\*
+- logs and error messages only ever show the start of the address (hooks.slack.com), with the secret part hidden
 - [gitleaks](https://github.com/gitleaks/gitleaks) runs as a pre-commit hook and in CI
 
 To turn on the pre-commit hooks:
