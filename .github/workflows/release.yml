@@ -26,9 +26,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           cat > notes.md <<NOTES
-          **Browser extension:** download \`lookalike-watch-extension.zip\`, unzip it, then in Chrome or Edge open the extensions page, turn on Developer mode and choose **Load unpacked**.
+          Browser extension: download \`lookalike-watch-extension.zip\`, unzip it, then in Chrome or Edge open the extensions page, turn on Developer mode and choose Load unpacked.
 
-          **Scanner:** \`pip install https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/lookalike_watch-${GITHUB_REF_NAME#v}-py3-none-any.whl\`
+          Scanner: \`pip install https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/lookalike_watch-${GITHUB_REF_NAME#v}-py3-none-any.whl\`
 
           Step-by-step instructions are in the [README](https://github.com/${GITHUB_REPOSITORY}#download-and-try-it).
           NOTES
