@@ -1,0 +1,8 @@
+title = "lookalike-watch"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Lists of public website names, not secrets"
+paths = ['''^extension/data/(top-sites|known-sites|popular-hosts)\.json$''']
